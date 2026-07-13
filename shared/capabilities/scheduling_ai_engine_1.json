@@ -1,0 +1,52 @@
+{
+  "id": "scheduling_ai_engine_1",
+  "pluginKey": "@official-plugins/ai-text-to-json",
+  "pluginVersion": "1.0.23",
+  "name": "排班AI引擎",
+  "description": "接收排班参数（日期范围、开机数量、特殊要求）及当前班组/人员/出勤数据，按排班逻辑规则生成结构化排班计划。",
+  "icon": "",
+  "paramsSchema": {
+    "properties": {
+      "special_requirements": {
+        "type": "string",
+        "description": "排班的特殊要求，例如：节假日排班、人员调休等"
+      },
+      "staff_data": {
+        "type": "string",
+        "description": "当前班组、人员及出勤数据，包含人员信息、技能、可用时间等"
+      },
+      "date_range": {
+        "type": "string",
+        "description": "排班的日期范围，例如：2024-06-01至2024-06-30"
+      },
+      "machine_count": {
+        "type": "string",
+        "description": "需要开机的设备数量"
+      }
+    },
+    "required": [
+      "date_range",
+      "machine_count",
+      "staff_data"
+    ],
+    "type": "object"
+  },
+  "formValue": {
+    "modelID": "87",
+    "modelParams": {
+      "temperature": 0.5,
+      "maxTokens": 8192
+    },
+    "prompt": "你是专业的排班规划专家，具备丰富的制造业排班经验。请根据以下提供的信息生成合理的排班计划：\n\n排班日期范围：{{input.date_range}}\n需要开机数量：{{input.machine_count}}\n特殊要求：{{input.special_requirements}}\n班组/人员/出勤数据：{{input.staff_data}}\n\n排班规则要求：\n1. 每个班次的人员配置需满足设备运行需求\n2. 合理分配早班、晚班、长白班，确保人员休息时间符合劳动法规定\n3. 人员技能与岗位需求匹配\n4. 考虑人员出勤情况，避免冲突\n5. 每个班组的角色配置合理，确保生产顺利进行\n\n请严格按照指定的JSON结构输出，不要返回其他额外内容。",
+    "jsonStructure": [
+      {
+        "name": "schedules",
+        "paramType": "Array",
+        "paramDescription": "排班计划列表，items schema: {date: string(日期，格式YYYY-MM-DD), shift: string(班次，可选值：早班/晚班/长白班), team: string(班组名称), personName: string(人员姓名), role: string(人员角色), skills: string(人员技能), status: string(排班状态，如：正常/调休/请假等)}"
+      }
+    ]
+  },
+  "createdAt": 1782802056246,
+  "updatedAt": 1782802056246,
+  "createdBy": 7577145584394439902
+}

@@ -1,0 +1,72 @@
+{
+  "id": "scheduling_ai_engine_2",
+  "pluginKey": "@official-plugins/ai-text-to-json",
+  "pluginVersion": "1.0.23",
+  "name": "排班AI引擎",
+  "description": "接收排班参数及人员出勤数据，按排班规则生成结构化排班计划",
+  "icon": "",
+  "paramsSchema": {
+    "type": "object",
+    "properties": {
+      "date_range": {
+        "type": "string",
+        "description": "排班日期范围，格式如：2024-06-01至2024-06-30"
+      },
+      "required_shifts": {
+        "type": "string",
+        "description": "每日需要开机的班次数量"
+      },
+      "special_requirements": {
+        "description": "特殊排班要求，如节假日排班、特定人员排班偏好等",
+        "type": "string"
+      },
+      "team_staff_data": {
+        "description": "当前班组人员信息、出勤数据、可排班时间等基础数据",
+        "type": "string"
+      }
+    },
+    "required": [
+      "date_range",
+      "required_shifts",
+      "team_staff_data"
+    ]
+  },
+  "formValue": {
+    "prompt": "你是一位专业的排班规划专家，具备丰富的排班优化经验。请根据以下提供的排班参数和人员数据，生成合理的排班计划。\n\n排班参数：\n日期范围：{{input.date_range}}\n每日需要班次数量：{{input.required_shifts}}\n特殊要求：{{input.special_requirements}}\n\n人员基础数据：\n{{input.team_staff_data}}\n\n排班规则要求：\n1. 确保每日每个班次都有合适的人员在岗\n2. 公平分配班次，避免人员排班不均\n3. 考虑人员的出勤限制和排班偏好\n4. 法定节假日按照相关规定安排\n5. 确保排班计划符合劳动法相关要求\n6. 连续工作天数不超过5天，保证人员休息时间\n\n请严格按照指定的JSON结构输出排班计划，确保数据准确、结构完整。",
+    "jsonStructure": [
+      {
+        "name": "schedule_period",
+        "paramType": "String",
+        "paramDescription": "排班周期，格式：开始日期-结束日期"
+      },
+      {
+        "name": "daily_schedules",
+        "paramType": "Array",
+        "paramDescription": "每日排班列表，items schema: {date: string(排班日期), shifts: Array(当日班次列表，items schema: {shift_id: string(班次ID), shift_name: string(班次名称), start_time: string(开始时间), end_time: string(结束时间), staff_id: string(排班人员ID), staff_name: string(排班人员姓名)})}"
+      },
+      {
+        "name": "staff_workload_statistics",
+        "paramType": "Array",
+        "paramDescription": "人员工作量统计，items schema: {staff_id: string(人员ID), staff_name: string(人员姓名), total_shifts: number(总班次数量), total_work_hours: number(总工作时长)}"
+      },
+      {
+        "name": "special_arrangements",
+        "paramType": "Array",
+        "paramDescription": "特殊安排说明，items schema: {date: string(日期), description: string(特殊安排内容)}"
+      },
+      {
+        "name": "schedule_notes",
+        "paramType": "String",
+        "paramDescription": "排班计划说明和注意事项"
+      }
+    ],
+    "modelID": "87",
+    "modelParams": {
+      "temperature": 0.5,
+      "maxTokens": 8192
+    }
+  },
+  "createdAt": 1782804602104,
+  "updatedAt": 1782804602104,
+  "createdBy": 7577145584394439902
+}
