@@ -18,6 +18,15 @@ type ScheduleResultRow = {
   BORROW_REASON: string | null;
   VALIDATION_RESULT: string | null;
   EXCEPTION_REASON: string | null;
+  IS_ADJUSTED?: string;
+  ADJUSTMENT_ID?: string | null;
+  ADJUSTMENT_ORIGINAL_PERSON_NAME?: string | null;
+  ADJUSTMENT_LEAVE_TYPE?: string | null;
+  ADJUSTMENT_REASON?: string | null;
+  IS_SWAPPED?: string;
+  SWAP_ID?: string | null;
+  SWAP_PEER_PERSON_NAME?: string | null;
+  SWAP_REASON?: string | null;
 };
 
 type ScheduleResultForUpdateRow = ScheduleResultRow & {
@@ -82,6 +91,12 @@ export class ScheduleResultService {
       '借调原因',
       '校验结果',
       '异常原因',
+      '调整状态',
+      '原人员',
+      '调整原因',
+      '换班状态',
+      '换班对象',
+      '换班原因',
     ];
     const body = rows.map((row) => [
       row.date,
@@ -97,6 +112,12 @@ export class ScheduleResultService {
       row.borrowReason,
       row.validationResult,
       row.exceptionReason,
+      row.isAdjusted ? '已调整' : '原始',
+      row.originalPersonName,
+      row.adjustmentReason,
+      row.isSwapped ? '已换班' : '未换班',
+      row.swapPeerPersonName,
+      row.swapReason,
     ]);
 
     return [header, ...body]
@@ -123,6 +144,12 @@ export class ScheduleResultService {
 
   async updateResult(id: string, rawPayload: unknown) {
     const current = await this.loadResultForUpdate(id);
+    if (await this.hasActiveAdjustment(id)) {
+      throw new BadRequestException('该排班结果存在本周临时调整，请先撤销调整后再编辑原始排班');
+    }
+    if (await this.hasActiveSwap(id)) {
+      throw new BadRequestException('该排班结果存在换班，请先撤销换班后再编辑原始排班');
+    }
     const payload = this.parseUpdatePayload(rawPayload);
     const validationErrors = await this.validateManualUpdate(id, current, payload);
     if (['通过', '已确认'].includes(payload.validationResult) && validationErrors.length > 0) {
@@ -156,6 +183,29 @@ export class ScheduleResultService {
 
   private async ensureExists(id: string) {
     await this.loadResultForUpdate(id);
+  }
+
+  private async hasActiveAdjustment(resultId: string) {
+    const rows = await this.databaseService.query<{ CNT: number }>(
+      `SELECT COUNT(*) AS CNT
+       FROM SCHEDULE_RESULT_ADJUSTMENT
+       WHERE RESULT_ID = :resultId AND STATUS = '生效'`,
+      { resultId },
+    );
+
+    return Number(rows[0]?.CNT ?? 0) > 0;
+  }
+
+  private async hasActiveSwap(resultId: string) {
+    const rows = await this.databaseService.query<{ CNT: number }>(
+      `SELECT COUNT(*) AS CNT
+       FROM SCHEDULE_RESULT_SWAP
+       WHERE STATUS = N'生效'
+         AND (SOURCE_RESULT_ID = :resultId OR TARGET_RESULT_ID = :resultId)`,
+      { resultId },
+    );
+
+    return Number(rows[0]?.CNT ?? 0) > 0;
   }
 
   private async loadResultForUpdate(id: string) {
@@ -350,11 +400,25 @@ export class ScheduleResultService {
       params.jobId = query.jobId;
     }
     if (query.team) {
-      filters.push('sr.TEAM = :team');
+      filters.push(`COALESCE(
+        adj.REPLACEMENT_TEAM,
+        CASE
+          WHEN sws.ID IS NOT NULL THEN sws.TARGET_TEAM
+          WHEN swt.ID IS NOT NULL THEN swt.SOURCE_TEAM
+        END,
+        sr.TEAM
+      ) = :team`);
       params.team = query.team;
     }
     if (query.personName) {
-      filters.push('sr.PERSON_NAME LIKE :personName');
+      filters.push(`COALESCE(
+        adj.REPLACEMENT_PERSON_NAME,
+        CASE
+          WHEN sws.ID IS NOT NULL THEN sws.TARGET_PERSON_NAME
+          WHEN swt.ID IS NOT NULL THEN swt.SOURCE_PERSON_NAME
+        END,
+        sr.PERSON_NAME
+      ) LIKE :personName`);
       params.personName = `%${query.personName}%`;
     }
     if (query.validationResult) {
@@ -412,19 +476,137 @@ export class ScheduleResultService {
          ACTUAL_TEAM,
          BORROW_REASON,
          VALIDATION_RESULT,
-         EXCEPTION_REASON
+         EXCEPTION_REASON,
+         IS_ADJUSTED,
+         ADJUSTMENT_ID,
+         ADJUSTMENT_ORIGINAL_PERSON_NAME,
+         ADJUSTMENT_LEAVE_TYPE,
+         ADJUSTMENT_REASON,
+         IS_SWAPPED,
+         SWAP_ID,
+         SWAP_PEER_PERSON_NAME,
+         SWAP_REASON
        FROM (
          SELECT
-           sr.*,
+           sr.ID,
+           sr.JOB_ID,
+           sr.WORK_DATE,
+           sr.WEEKDAY_NAME,
+           sr.SHIFT_NAME,
+           COALESCE(
+             adj.REPLACEMENT_TEAM,
+             CASE
+               WHEN sws.ID IS NOT NULL THEN sws.TARGET_TEAM
+               WHEN swt.ID IS NOT NULL THEN swt.SOURCE_TEAM
+             END,
+             sr.TEAM
+           ) AS TEAM,
+           sr.MEMBER_ID,
+           COALESCE(
+             adj.REPLACEMENT_PERSON_NAME,
+             CASE
+               WHEN sws.ID IS NOT NULL THEN sws.TARGET_PERSON_NAME
+               WHEN swt.ID IS NOT NULL THEN swt.SOURCE_PERSON_NAME
+             END,
+             sr.PERSON_NAME
+           ) AS PERSON_NAME,
+           COALESCE(
+             adj.REPLACEMENT_ROLE_NAME,
+             CASE
+               WHEN sws.ID IS NOT NULL THEN sws.TARGET_ROLE_NAME
+               WHEN swt.ID IS NOT NULL THEN swt.SOURCE_ROLE_NAME
+             END,
+             sr.ROLE_NAME
+           ) AS ROLE_NAME,
+           COALESCE(
+             adj.REPLACEMENT_SKILLS_TEXT,
+             CASE
+               WHEN sws.ID IS NOT NULL THEN sws.TARGET_SKILLS_TEXT
+               WHEN swt.ID IS NOT NULL THEN swt.SOURCE_SKILLS_TEXT
+             END,
+             sr.SKILLS_TEXT
+           ) AS SKILLS_TEXT,
+           CASE
+             WHEN adj.ID IS NOT NULL THEN N'临时调整'
+             WHEN sws.ID IS NOT NULL OR swt.ID IS NOT NULL THEN N'换班'
+             ELSE sr.STATUS
+           END AS STATUS,
+           sr.IS_BORROWED,
+           sr.ORIGINAL_TEAM,
+           COALESCE(
+             adj.REPLACEMENT_TEAM,
+             CASE
+               WHEN sws.ID IS NOT NULL THEN sws.TARGET_TEAM
+               WHEN swt.ID IS NOT NULL THEN swt.SOURCE_TEAM
+             END,
+             sr.ACTUAL_TEAM,
+             sr.TEAM
+           ) AS ACTUAL_TEAM,
+           CASE
+             WHEN adj.ID IS NOT NULL THEN N'本周临时调整：' || adj.LEAVE_TYPE
+             WHEN sws.ID IS NOT NULL OR swt.ID IS NOT NULL THEN N'换班'
+             ELSE sr.BORROW_REASON
+           END AS BORROW_REASON,
+           sr.VALIDATION_RESULT,
+           sr.EXCEPTION_REASON,
+           CASE WHEN adj.ID IS NOT NULL THEN N'是' ELSE N'否' END AS IS_ADJUSTED,
+           adj.ID AS ADJUSTMENT_ID,
+           adj.ORIGINAL_PERSON_NAME AS ADJUSTMENT_ORIGINAL_PERSON_NAME,
+           adj.LEAVE_TYPE AS ADJUSTMENT_LEAVE_TYPE,
+           adj.REASON AS ADJUSTMENT_REASON,
+           CASE WHEN sws.ID IS NOT NULL OR swt.ID IS NOT NULL THEN N'是' ELSE N'否' END AS IS_SWAPPED,
+           COALESCE(sws.ID, swt.ID) AS SWAP_ID,
+           CASE
+             WHEN sws.ID IS NOT NULL THEN sws.TARGET_PERSON_NAME
+             WHEN swt.ID IS NOT NULL THEN swt.SOURCE_PERSON_NAME
+           END AS SWAP_PEER_PERSON_NAME,
+           COALESCE(sws.REASON, swt.REASON) AS SWAP_REASON,
            ROW_NUMBER() OVER (
-             PARTITION BY sr.WORK_DATE, sr.SHIFT_NAME, sr.PERSON_NAME, NVL(sr.ACTUAL_TEAM, sr.TEAM)
+             PARTITION BY
+               sr.WORK_DATE,
+               sr.SHIFT_NAME,
+               COALESCE(
+                 adj.REPLACEMENT_PERSON_NAME,
+                 CASE
+                   WHEN sws.ID IS NOT NULL THEN sws.TARGET_PERSON_NAME
+                   WHEN swt.ID IS NOT NULL THEN swt.SOURCE_PERSON_NAME
+                 END,
+                 sr.PERSON_NAME
+               ),
+               COALESCE(
+                 adj.REPLACEMENT_TEAM,
+                 CASE
+                   WHEN sws.ID IS NOT NULL THEN sws.TARGET_TEAM
+                   WHEN swt.ID IS NOT NULL THEN swt.SOURCE_TEAM
+                 END,
+                 sr.ACTUAL_TEAM,
+                 sr.TEAM
+               )
              ORDER BY sr.CREATED_AT DESC, sr.ID DESC
            ) AS RN
          FROM ${baseSource}
+         LEFT JOIN SCHEDULE_RESULT_ADJUSTMENT adj
+           ON adj.RESULT_ID = sr.ID
+          AND adj.STATUS = N'生效'
+         LEFT JOIN SCHEDULE_RESULT_SWAP sws
+           ON sws.SOURCE_RESULT_ID = sr.ID
+          AND sws.STATUS = N'生效'
+         LEFT JOIN SCHEDULE_RESULT_SWAP swt
+           ON swt.TARGET_RESULT_ID = sr.ID
+          AND swt.STATUS = N'生效'
          ${filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : ''}
        )
-       WHERE RN = 1
-       ORDER BY PERSON_NAME, WORK_DATE, SHIFT_NAME, TEAM`,
+      WHERE RN = 1
+      ORDER BY
+        WORK_DATE ASC,
+        CASE SHIFT_NAME
+          WHEN N'早班' THEN 1
+          WHEN N'晚班' THEN 2
+          WHEN N'长白班' THEN 3
+          ELSE 9
+        END,
+        TEAM,
+        PERSON_NAME`,
       params,
     );
   }
@@ -447,6 +629,15 @@ export class ScheduleResultService {
       borrowReason: row.BORROW_REASON ?? '',
       validationResult: row.VALIDATION_RESULT ?? '通过',
       exceptionReason: row.EXCEPTION_REASON ?? '',
+      isAdjusted: row.IS_ADJUSTED === '是',
+      adjustmentId: row.ADJUSTMENT_ID ?? '',
+      originalPersonName: row.ADJUSTMENT_ORIGINAL_PERSON_NAME ?? row.PERSON_NAME,
+      adjustmentLeaveType: row.ADJUSTMENT_LEAVE_TYPE ?? '',
+      adjustmentReason: row.ADJUSTMENT_REASON ?? '',
+      isSwapped: row.IS_SWAPPED === '是',
+      swapId: row.SWAP_ID ?? '',
+      swapPeerPersonName: row.SWAP_PEER_PERSON_NAME ?? '',
+      swapReason: row.SWAP_REASON ?? '',
     };
   }
 
@@ -462,8 +653,8 @@ export class ScheduleResultService {
     return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getDay()];
   }
 
-  private escapeCsv(value: string) {
-    const text = value ?? '';
+  private escapeCsv(value: unknown) {
+    const text = value == null ? '' : String(value);
     if (/[",\n\r]/.test(text)) {
       return `"${text.replace(/"/g, '""')}"`;
     }

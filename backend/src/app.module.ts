@@ -9,6 +9,8 @@ import { TeamScheduleRecordModule } from './modules/team-schedule-record/team-sc
 import { ScheduleJobModule } from './modules/schedule-job/schedule-job.module';
 import { ScheduleResultModule } from './modules/schedule-result/schedule-result.module';
 import { EmployeeAgentModule } from './modules/employee-agent/employee-agent.module';
+import { ScheduleAdjustmentModule } from './modules/schedule-adjustment/schedule-adjustment.module';
+import { ScheduleSwapModule } from './modules/schedule-swap/schedule-swap.module';
 
 @Module({
   imports: [
@@ -24,6 +26,8 @@ import { EmployeeAgentModule } from './modules/employee-agent/employee-agent.mod
     TeamScheduleRecordModule,
     ScheduleJobModule,
     ScheduleResultModule,
+    ScheduleAdjustmentModule,
+    ScheduleSwapModule,
     EmployeeAgentModule,
   ],
 })

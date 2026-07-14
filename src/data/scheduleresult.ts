@@ -17,6 +17,15 @@ export interface IScheduleResult {
   borrowReason: string;
   validationResult: '通过' | '不通过' | string;
   exceptionReason: string;
+  isAdjusted?: boolean;
+  adjustmentId?: string;
+  originalPersonName?: string;
+  adjustmentLeaveType?: string;
+  adjustmentReason?: string;
+  isSwapped?: boolean;
+  swapId?: string;
+  swapPeerPersonName?: string;
+  swapReason?: string;
 }
 
 export const MOCK_SCHEDULE_RESULTS: IScheduleResult[] = [];

@@ -9,6 +9,7 @@ type SwimlaneMode = 'person' | 'team';
 
 type SwimlaneCell = {
   key: string;
+  result: IScheduleResult;
   shift: string;
   team: string;
   personName: string;
@@ -20,6 +21,20 @@ type SwimlaneCell = {
   borrowReason: string;
   validationResult: string;
   exceptionReason: string;
+  isAdjusted: boolean;
+  originalPersonName: string;
+  adjustmentReason: string;
+  isSwapped: boolean;
+  swapPeerPersonName: string;
+  swapReason: string;
+};
+
+type ScheduleSwimlaneChartProps = {
+  results: IScheduleResult[];
+  onAdjustResult?: (result: IScheduleResult) => void;
+  onCancelAdjustment?: (result: IScheduleResult) => void;
+  onCancelSwap?: (result: IScheduleResult) => void;
+  canAdjustResult?: (result: IScheduleResult) => boolean;
 };
 
 const MODE_CONFIG: Record<SwimlaneMode, {
@@ -36,7 +51,7 @@ const MODE_CONFIG: Record<SwimlaneMode, {
   },
   team: {
     title: '班组泳道图',
-    description: '点击“班组图”后，按班组逐行展示各班组在各日期的排班。',
+    description: '按班组逐行展示排班；点击人员方块可处理本周请假或撤销临时调整。',
     laneHeader: '班组',
     cellSubLabel: '人员',
   },
@@ -79,11 +94,21 @@ function getCellTitle(item: SwimlaneCell) {
     item.borrowReason ? `借调原因：${item.borrowReason}` : '',
     item.validationResult ? `校验：${item.validationResult}` : '',
     item.exceptionReason ? `异常原因：${item.exceptionReason}` : '',
+    item.isAdjusted ? `临时调整：${item.originalPersonName} -> ${item.personName}` : '',
+    item.adjustmentReason ? `调整原因：${item.adjustmentReason}` : '',
+    item.isSwapped ? `换班对象：${item.swapPeerPersonName}` : '',
+    item.swapReason ? `换班原因：${item.swapReason}` : '',
   ].filter(Boolean).join('\n');
 }
 
-export function ScheduleSwimlaneChart({ results }: { results: IScheduleResult[] }) {
-  const [mode, setMode] = useState<SwimlaneMode>('person');
+export function ScheduleSwimlaneChart({
+  results,
+  onAdjustResult,
+  onCancelAdjustment,
+  onCancelSwap,
+  canAdjustResult,
+}: ScheduleSwimlaneChartProps) {
+  const [mode, setMode] = useState<SwimlaneMode>('team');
   const activeMode = MODE_CONFIG[mode];
 
   const { dateList, laneList, cellMap } = useMemo(() => {
@@ -102,6 +127,7 @@ export function ScheduleSwimlaneChart({ results }: { results: IScheduleResult[] 
       const list = cells.get(key) ?? [];
       list.push({
         key: item.id,
+        result: item,
         shift: item.shift,
         team: item.team,
         personName: item.personName,
@@ -113,6 +139,12 @@ export function ScheduleSwimlaneChart({ results }: { results: IScheduleResult[] 
         borrowReason: item.borrowReason,
         validationResult: item.validationResult,
         exceptionReason: item.exceptionReason,
+        isAdjusted: Boolean(item.isAdjusted),
+        originalPersonName: item.originalPersonName ?? item.personName,
+        adjustmentReason: item.adjustmentReason ?? '',
+        isSwapped: Boolean(item.isSwapped),
+        swapPeerPersonName: item.swapPeerPersonName ?? '',
+        swapReason: item.swapReason ?? '',
       });
       cells.set(key, list);
     }
@@ -202,11 +234,41 @@ export function ScheduleSwimlaneChart({ results }: { results: IScheduleResult[] 
                         ) : (
                           <div className="flex h-full flex-col gap-1.5">
                             {items.map((item) => (
-                              <div
+                              <button
                                 key={item.key}
-                                title={getCellTitle(item)}
+                                type="button"
+                                title={[
+                                  getCellTitle(item),
+                                  mode === 'team'
+                                    ? item.isAdjusted
+                                      ? '点击撤销临时调整'
+                                      : item.isSwapped
+                                        ? '点击撤销换班'
+                                      : canAdjustResult?.(item.result) === false
+                                        ? '仅支持本周临时调整'
+                                        : '点击处理本周请假替班/换班'
+                                    : '',
+                                ].filter(Boolean).join('\n')}
+                                onClick={() => {
+                                  if (mode !== 'team') return;
+                                  if (item.isAdjusted) {
+                                    onCancelAdjustment?.(item.result);
+                                    return;
+                                  }
+                                  if (item.isSwapped) {
+                                    onCancelSwap?.(item.result);
+                                    return;
+                                  }
+                                  if (canAdjustResult?.(item.result) === false) return;
+                                  onAdjustResult?.(item.result);
+                                }}
+                                aria-disabled={mode !== 'team' || (!item.isAdjusted && !item.isSwapped && canAdjustResult?.(item.result) === false)}
                                 className={cn(
-                                  'relative min-h-8 rounded-[6px] border px-2 py-1 text-xs leading-tight',
+                                  'relative min-h-8 rounded-[6px] border px-2 py-1 text-left text-xs leading-tight',
+                                  mode === 'team' && 'transition hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                                  mode === 'team' && (item.isAdjusted || item.isSwapped) && 'cursor-pointer',
+                                  mode === 'team' && !item.isAdjusted && !item.isSwapped && canAdjustResult?.(item.result) !== false && 'cursor-pointer',
+                                  mode === 'team' && !item.isAdjusted && !item.isSwapped && canAdjustResult?.(item.result) === false && 'cursor-not-allowed opacity-60',
                                   SHIFT_CHIP_STYLES[item.shift] ?? 'border-gray-300 bg-gray-50 text-gray-900',
                                   VALIDATION_MARK_STYLES[item.validationResult],
                                 )}
@@ -216,6 +278,16 @@ export function ScheduleSwimlaneChart({ results }: { results: IScheduleResult[] 
                                   {item.isBorrowed === '是' && (
                                     <span className="rounded bg-white/80 px-1 text-[10px] font-bold text-amber-700">
                                       借
+                                    </span>
+                                  )}
+                                  {item.isAdjusted && (
+                                    <span className="rounded bg-white/80 px-1 text-[10px] font-bold text-red-700">
+                                      调
+                                    </span>
+                                  )}
+                                  {item.isSwapped && (
+                                    <span className="rounded bg-white/80 px-1 text-[10px] font-bold text-violet-700">
+                                      换
                                     </span>
                                   )}
                                 </div>
@@ -228,7 +300,7 @@ export function ScheduleSwimlaneChart({ results }: { results: IScheduleResult[] 
                                 {item.validationResult === '已确认' && (
                                   <span className="absolute right-1 top-1 size-1.5 rounded-full bg-amber-500" />
                                 )}
-                              </div>
+                              </button>
                             ))}
                           </div>
                         )}

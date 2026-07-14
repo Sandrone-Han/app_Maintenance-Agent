@@ -20,8 +20,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { IScheduleResult } from '@/data/scheduleresult';
-import { API_BASE_URL, apiGet, apiPut } from '@/lib/api';
+import { API_BASE_URL, apiGet, apiPost, apiPut } from '@/lib/api';
 import { ScheduleSwimlaneChart } from './ScheduleSwimlaneChart';
 
 const SHIFT_STYLES: Record<string, string> = {
@@ -58,6 +59,63 @@ type EditScheduleResultForm = {
   borrowReason: string;
   validationResult: string;
   exceptionReason: string;
+};
+
+type AdjustmentRecommendation = {
+  memberId: string;
+  personName: string;
+  team: string;
+  role: string;
+  skills: string[];
+  priority: number;
+  reason: string;
+  warnings: string[];
+  sourceType: '同班组' | '休息班组' | '其他班组';
+  riskLevel: '低风险' | '有风险';
+  riskScore: number;
+};
+
+type AdjustmentRecommendationResponse = {
+  resultId: string;
+  workDate: string;
+  shift: string;
+  originalPersonName: string;
+  recommendations: AdjustmentRecommendation[];
+};
+
+type AdjustmentForm = {
+  leaveType: string;
+  reason: string;
+  replacementPersonName: string;
+};
+
+type SwapRecommendation = {
+  resultId: string;
+  date: string;
+  shift: string;
+  personName: string;
+  team: string;
+  role: string;
+  skills: string[];
+  priority: number;
+  reason: string;
+  warnings: string[];
+  isCrossTeam: boolean;
+  riskLevel: '低风险' | '有风险';
+  riskScore: number;
+};
+
+type SwapRecommendationResponse = {
+  resultId: string;
+  workDate: string;
+  shift: string;
+  personName: string;
+  recommendations: SwapRecommendation[];
+};
+
+type SwapForm = {
+  targetResultId: string;
+  reason: string;
 };
 
 type HighlightField =
@@ -180,6 +238,23 @@ export default function ScheduleResultPage() {
   const [editingResult, setEditingResult] = useState<IScheduleResult | null>(null);
   const [editForm, setEditForm] = useState<EditScheduleResultForm | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [adjustingResult, setAdjustingResult] = useState<IScheduleResult | null>(null);
+  const [adjustmentForm, setAdjustmentForm] = useState<AdjustmentForm>({
+    leaveType: '请假',
+    reason: '',
+    replacementPersonName: '',
+  });
+  const [recommendations, setRecommendations] = useState<AdjustmentRecommendation[]>([]);
+  const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
+  const [isSavingAdjustment, setIsSavingAdjustment] = useState(false);
+  const [adjustmentTab, setAdjustmentTab] = useState('leave');
+  const [swapRecommendations, setSwapRecommendations] = useState<SwapRecommendation[]>([]);
+  const [isLoadingSwapRecommendations, setIsLoadingSwapRecommendations] = useState(false);
+  const [isSavingSwap, setIsSavingSwap] = useState(false);
+  const [swapForm, setSwapForm] = useState<SwapForm>({
+    targetResultId: '',
+    reason: '',
+  });
 
   const buildQueryParams = () => {
     const params = new URLSearchParams();
@@ -238,6 +313,7 @@ export default function ScheduleResultPage() {
   const getRowClassName = (result: IScheduleResult) => {
     if (result.validationResult === '不通过') return 'bg-red-50 hover:bg-red-100/70';
     if (result.validationResult === '已确认') return 'bg-amber-50 hover:bg-amber-100/70';
+    if (result.isAdjusted) return 'bg-sky-50 hover:bg-sky-100/70';
     return 'hover:bg-muted/40';
   };
 
@@ -289,6 +365,117 @@ export default function ScheduleResultPage() {
       toast.error('保存排班结果失败', { description: String(error) });
     } finally {
       setIsSavingEdit(false);
+    }
+  };
+
+  const openAdjustmentDialog = async (result: IScheduleResult) => {
+    setAdjustingResult(result);
+    setAdjustmentTab('leave');
+    setAdjustmentForm({
+      leaveType: result.adjustmentLeaveType || '请假',
+      reason: result.adjustmentReason || '',
+      replacementPersonName: '',
+    });
+    setSwapForm({ targetResultId: '', reason: '' });
+    setRecommendations([]);
+    setSwapRecommendations([]);
+    setIsLoadingRecommendations(true);
+    setIsLoadingSwapRecommendations(true);
+    try {
+      const data = await apiGet<AdjustmentRecommendationResponse>(`/schedule-adjustments/recommendations?resultId=${result.id}`);
+      setRecommendations(data.recommendations);
+      setAdjustmentForm((current) => ({
+        ...current,
+        replacementPersonName: data.recommendations[0]?.personName ?? '',
+      }));
+    } catch (error) {
+      toast.error('替班推荐加载失败', { description: String(error) });
+    } finally {
+      setIsLoadingRecommendations(false);
+    }
+    try {
+      const data = await apiGet<SwapRecommendationResponse>(`/schedule-swaps/recommendations?resultId=${result.id}`);
+      setSwapRecommendations(data.recommendations);
+      setSwapForm((current) => ({
+        ...current,
+        targetResultId: data.recommendations[0]?.resultId ?? '',
+      }));
+    } catch (error) {
+      toast.error('换班候选加载失败', { description: String(error) });
+    } finally {
+      setIsLoadingSwapRecommendations(false);
+    }
+  };
+
+  const closeAdjustmentDialog = () => {
+    setAdjustingResult(null);
+    setRecommendations([]);
+    setSwapRecommendations([]);
+    setAdjustmentForm({ leaveType: '请假', reason: '', replacementPersonName: '' });
+    setSwapForm({ targetResultId: '', reason: '' });
+    setAdjustmentTab('leave');
+  };
+
+  const saveAdjustment = async () => {
+    if (!adjustingResult || !adjustmentForm.replacementPersonName) return;
+    setIsSavingAdjustment(true);
+    try {
+      await apiPost('/schedule-adjustments', {
+        resultId: adjustingResult.id,
+        leaveType: adjustmentForm.leaveType,
+        reason: adjustmentForm.reason,
+        replacementPersonName: adjustmentForm.replacementPersonName,
+      });
+      toast.success('本周临时调整已生效');
+      closeAdjustmentDialog();
+      await loadResults();
+    } catch (error) {
+      toast.error('保存临时调整失败', { description: String(error) });
+    } finally {
+      setIsSavingAdjustment(false);
+    }
+  };
+
+  const cancelAdjustment = async (result: IScheduleResult) => {
+    if (!result.adjustmentId) return;
+    if (!window.confirm(`确认撤销 ${result.date} ${result.shift} 的临时调整吗？`)) return;
+    try {
+      await apiPut(`/schedule-adjustments/${result.adjustmentId}/cancel`, {});
+      toast.success('临时调整已撤销');
+      await loadResults();
+    } catch (error) {
+      toast.error('撤销临时调整失败', { description: String(error) });
+    }
+  };
+
+  const saveSwap = async () => {
+    if (!adjustingResult || !swapForm.targetResultId) return;
+    setIsSavingSwap(true);
+    try {
+      await apiPost('/schedule-swaps', {
+        sourceResultId: adjustingResult.id,
+        targetResultId: swapForm.targetResultId,
+        reason: swapForm.reason,
+      });
+      toast.success('换班已生效');
+      closeAdjustmentDialog();
+      await loadResults();
+    } catch (error) {
+      toast.error('保存换班失败', { description: String(error) });
+    } finally {
+      setIsSavingSwap(false);
+    }
+  };
+
+  const cancelSwap = async (result: IScheduleResult) => {
+    if (!result.swapId) return;
+    if (!window.confirm(`确认撤销 ${result.date} ${result.shift} 的换班吗？`)) return;
+    try {
+      await apiPut(`/schedule-swaps/${result.swapId}/cancel`, {});
+      toast.success('换班已撤销');
+      await loadResults();
+    } catch (error) {
+      toast.error('撤销换班失败', { description: String(error) });
     }
   };
 
@@ -390,7 +577,13 @@ export default function ScheduleResultPage() {
         </CardHeader>
       </Card>
 
-      <ScheduleSwimlaneChart results={filteredResults} />
+      <ScheduleSwimlaneChart
+        results={filteredResults}
+        canAdjustResult={() => true}
+        onAdjustResult={(result) => void openAdjustmentDialog(result)}
+        onCancelAdjustment={(result) => void cancelAdjustment(result)}
+        onCancelSwap={(result) => void cancelSwap(result)}
+      />
 
       {exceptionCount > 0 && (
         <div className="flex items-start gap-3 rounded-[8px] border border-amber-300 bg-amber-50 p-4 text-amber-900">
@@ -402,7 +595,7 @@ export default function ScheduleResultPage() {
       <Card className="rounded-[8px] border-border shadow-sm">
         <CardContent className="p-0">
           <div className="w-full overflow-x-auto">
-            <table className="w-full min-w-[1280px] border-collapse">
+            <table className="w-full min-w-[1480px] border-collapse">
               <thead>
                 <tr className="bg-muted/60">
                   {[
@@ -419,6 +612,7 @@ export default function ScheduleResultPage() {
                     '借调原因',
                     '校验结果',
                     '异常原因',
+                    '调整状态',
                     '操作',
                   ].map((header) => (
                     <th key={header} className="border border-border px-3 py-3 text-left text-xs font-bold text-muted-foreground">
@@ -430,7 +624,7 @@ export default function ScheduleResultPage() {
               <tbody>
                 {filteredResults.length === 0 ? (
                   <tr>
-                    <td colSpan={14} className="border border-border px-3 py-12 text-center text-sm text-muted-foreground">
+                    <td colSpan={15} className="border border-border px-3 py-12 text-center text-sm text-muted-foreground">
                       当前筛选条件下没有排班结果。
                     </td>
                   </tr>
@@ -462,11 +656,46 @@ export default function ScheduleResultPage() {
                       {result.exceptionReason || '-'}
                     </td>
                     <td className="border border-border px-3 py-2 text-sm">
-                      <div className="flex items-center gap-2">
+                      {result.isAdjusted ? (
+                        <div className="space-y-1">
+                          <span className="inline-flex rounded bg-sky-100 px-2 py-1 text-xs font-medium text-sky-900">
+                            已调整
+                          </span>
+                          <div className="text-xs text-muted-foreground">
+                            {result.originalPersonName || '-'} → {result.personName}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {result.adjustmentLeaveType || '临时调整'}{result.adjustmentReason ? `：${result.adjustmentReason}` : ''}
+                          </div>
+                        </div>
+                      ) : result.isSwapped ? (
+                        <div className="space-y-1">
+                          <span className="inline-flex rounded bg-violet-100 px-2 py-1 text-xs font-medium text-violet-900">
+                            已换班
+                          </span>
+                          <div className="text-xs text-muted-foreground">
+                            对象：{result.swapPeerPersonName || '-'}
+                          </div>
+                          {result.swapReason && (
+                            <div className="text-xs text-muted-foreground">
+                              原因：{result.swapReason}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="inline-flex rounded bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700">
+                          原始
+                        </span>
+                      )}
+                    </td>
+                    <td className="border border-border px-3 py-2 text-sm">
+                      <div className="flex flex-wrap items-center gap-2">
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => openEditDialog(result)}
+                          disabled={Boolean(result.isAdjusted || result.isSwapped)}
+                          title={result.isAdjusted || result.isSwapped ? '请先撤销临时调整或换班后再编辑原始排班' : '编辑原始排班结果'}
                           className="rounded-[8px]"
                         >
                           <Pencil className="size-4" />
@@ -495,6 +724,234 @@ export default function ScheduleResultPage() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={Boolean(adjustingResult)} onOpenChange={(open) => {
+        if (!open) closeAdjustmentDialog();
+      }}>
+        <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto rounded-[8px]">
+          <DialogHeader>
+            <DialogTitle>排班调整</DialogTitle>
+          </DialogHeader>
+
+          {adjustingResult && (
+            <div className="space-y-5">
+              <div className="grid gap-3 rounded-[8px] border bg-muted/30 p-4 text-sm md:grid-cols-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">日期 / 班次</p>
+                  <p className="mt-1 font-medium">{adjustingResult.date} {adjustingResult.shift}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">请假人员</p>
+                  <p className="mt-1 font-medium">{adjustingResult.originalPersonName || adjustingResult.personName}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">班组 / 角色</p>
+                  <p className="mt-1 font-medium">{adjustingResult.actualTeam || adjustingResult.team} / {adjustingResult.role}</p>
+                </div>
+              </div>
+
+              <Tabs value={adjustmentTab} onValueChange={setAdjustmentTab}>
+                <TabsList>
+                  <TabsTrigger value="leave">请假替班</TabsTrigger>
+                  <TabsTrigger value="swap">换班</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="leave" className="space-y-5">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">请假类型</Label>
+                      <Select
+                        value={adjustmentForm.leaveType}
+                        onValueChange={(value) => setAdjustmentForm((current) => ({ ...current, leaveType: value }))}
+                      >
+                        <SelectTrigger className="h-9">
+                          <SelectValue placeholder="选择请假类型" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="请假">请假</SelectItem>
+                          <SelectItem value="事假">事假</SelectItem>
+                          <SelectItem value="临时调休">临时调休</SelectItem>
+                          <SelectItem value="其他">其他</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">替班人员</Label>
+                      {recommendations.length > 0 ? (
+                        <Select
+                          value={adjustmentForm.replacementPersonName}
+                          onValueChange={(value) => setAdjustmentForm((current) => ({ ...current, replacementPersonName: value }))}
+                        >
+                          <SelectTrigger className="h-9">
+                            <SelectValue placeholder="选择替班人员" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {recommendations.map((item) => (
+                              <SelectItem key={item.memberId} value={item.personName}>
+                                {item.personName} / {item.team} / {item.role}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <div className="flex h-9 items-center rounded-[8px] border px-3 text-sm text-muted-foreground">
+                          {isLoadingRecommendations ? '正在生成推荐...' : '暂无可用替班人'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">请假原因 / 备注</Label>
+                    <Textarea
+                      value={adjustmentForm.reason}
+                      onChange={(event) => setAdjustmentForm((current) => ({ ...current, reason: event.target.value }))}
+                      placeholder="例如：突发请假，需要本周临时替班"
+                      className="min-h-20"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">替班推荐</Label>
+                    <div className="grid max-h-[320px] gap-2 overflow-y-auto pr-1">
+                      {recommendations.length === 0 && !isLoadingRecommendations ? (
+                        <div className="rounded-[8px] border border-dashed p-4 text-sm text-muted-foreground">
+                          当前没有可执行候选，请检查人员出勤、已有调整或排班冲突。
+                        </div>
+                      ) : recommendations.map((item) => (
+                        <button
+                          key={item.memberId}
+                          type="button"
+                          onClick={() => setAdjustmentForm((current) => ({ ...current, replacementPersonName: item.personName }))}
+                          className={`rounded-[8px] border p-3 text-left text-sm transition ${
+                            adjustmentForm.replacementPersonName === item.personName
+                              ? 'border-primary bg-primary/5'
+                              : 'border-border hover:bg-muted/40'
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-medium">{item.personName} / {item.team} / {item.role}</span>
+                            <span className="flex flex-wrap items-center gap-1 text-xs">
+                              <span className="rounded bg-blue-100 px-2 py-0.5 font-medium text-blue-900">
+                                {item.sourceType}
+                              </span>
+                              <span className={`rounded px-2 py-0.5 font-medium ${
+                                item.riskLevel === '低风险'
+                                  ? 'bg-emerald-100 text-emerald-900'
+                                  : 'bg-amber-100 text-amber-900'
+                              }`}>
+                                {item.riskLevel}
+                              </span>
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">{item.reason}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            技能：{item.skills.length > 0 ? item.skills.join('、') : '-'}
+                          </p>
+                          {item.warnings.length > 0 && (
+                            <p className="mt-1 text-xs text-amber-700">
+                              风险提示：{item.warnings.join('；')}
+                            </p>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="swap" className="space-y-5">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">换班原因 / 备注</Label>
+                    <Textarea
+                      value={swapForm.reason}
+                      onChange={(event) => setSwapForm((current) => ({ ...current, reason: event.target.value }))}
+                      placeholder="例如：双方协商换班，不产生还班欠账"
+                      className="min-h-20"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-xs text-muted-foreground">可换班候选</Label>
+                    <div className="grid max-h-[360px] gap-2 overflow-y-auto pr-1">
+                      {swapRecommendations.length === 0 && !isLoadingSwapRecommendations ? (
+                        <div className="rounded-[8px] border border-dashed p-4 text-sm text-muted-foreground">
+                          当前没有可执行候选，请检查人员出勤、已有调整或排班冲突。
+                        </div>
+                      ) : swapRecommendations.map((item) => (
+                        <button
+                          key={item.resultId}
+                          type="button"
+                          onClick={() => setSwapForm((current) => ({ ...current, targetResultId: item.resultId }))}
+                          className={`rounded-[8px] border p-3 text-left text-sm transition ${
+                            swapForm.targetResultId === item.resultId
+                              ? 'border-primary bg-primary/5'
+                              : 'border-border hover:bg-muted/40'
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="font-medium">
+                              {item.date} {item.shift} / {item.personName} / {item.team} / {item.role}
+                            </span>
+                            <span className="flex flex-wrap items-center gap-1 text-xs">
+                              <span className={`rounded px-2 py-0.5 font-medium ${
+                                item.isCrossTeam
+                                  ? 'bg-violet-100 text-violet-900'
+                                  : 'bg-blue-100 text-blue-900'
+                              }`}>
+                                {item.isCrossTeam ? '跨班组' : '同班组'}
+                              </span>
+                              <span className={`rounded px-2 py-0.5 font-medium ${
+                                item.riskLevel === '低风险'
+                                  ? 'bg-emerald-100 text-emerald-900'
+                                  : 'bg-amber-100 text-amber-900'
+                              }`}>
+                                {item.riskLevel}
+                              </span>
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">{item.reason}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            技能：{item.skills.length > 0 ? item.skills.join('、') : '-'}
+                          </p>
+                          {item.warnings.length > 0 && (
+                            <p className="mt-1 text-xs text-amber-700">
+                              风险提示：{item.warnings.join('；')}
+                            </p>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={closeAdjustmentDialog} disabled={isSavingAdjustment || isSavingSwap} className="rounded-[8px]">
+              取消
+            </Button>
+            {adjustmentTab === 'leave' ? (
+              <Button
+                onClick={() => void saveAdjustment()}
+                disabled={isSavingAdjustment || isLoadingRecommendations || !adjustmentForm.replacementPersonName}
+                className="rounded-[8px]"
+              >
+                {isSavingAdjustment ? '保存中...' : '确认请假替班'}
+              </Button>
+            ) : (
+              <Button
+                onClick={() => void saveSwap()}
+                disabled={isSavingSwap || isLoadingSwapRecommendations || !swapForm.targetResultId}
+                className="rounded-[8px]"
+              >
+                {isSavingSwap ? '保存中...' : '确认换班'}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(editingResult)} onOpenChange={(open) => {
         if (!open) closeEditDialog();
