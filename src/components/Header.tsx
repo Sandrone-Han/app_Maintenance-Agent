@@ -1,14 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
-
-const NAV_ITEMS = [
-  { path: '/schedule-config', label: '排班配置' },
-  { path: '/schedule-result', label: '排班结果' },
-  { path: '/team-manage', label: '班组管理' },
-  { path: '/personnel', label: '人员信息' },
-  { path: '/team-schedule-record', label: '班组排班记录' },
-];
+import { NAV_ITEMS } from '@/config/navigation';
 
 export default function Header() {
   const { pathname } = useLocation();
@@ -32,10 +25,7 @@ export default function Header() {
 
         <nav className="hidden md:flex items-center gap-1 ml-4">
           {NAV_ITEMS.map((item) => {
-            const isActive =
-              item.path === '/'
-                ? pathname === '/'
-                : pathname === item.path || pathname.startsWith(`${item.path}/`);
+            const isActive = pathname === item.path || pathname.startsWith(`${item.path}/`);
             return (
               <NavLink
                 key={item.path}

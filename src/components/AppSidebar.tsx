@@ -9,25 +9,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
-import {
-  BarChart3,
-  Bot,
-  CalendarClock,
-  ClipboardList,
-  History,
-  UserCheck,
-  Users,
-} from 'lucide-react';
-
-const NAV_ITEMS = [
-  { path: '/schedule-config', label: '排班配置', icon: CalendarClock },
-  { path: '/schedule-result', label: '排班结果', icon: ClipboardList },
-  { path: '/employee-agent', label: '员工查询', icon: Bot },
-  { path: '/team-manage', label: '班组管理', icon: Users },
-  { path: '/personnel', label: '休假信息', icon: UserCheck },
-  { path: '/team-schedule-record', label: '排班记录', icon: History },
-  { path: '/data-statistics', label: '数据统计', icon: BarChart3 },
-];
+import { NAV_ITEMS } from '@/config/navigation';
 
 export default function AppSidebar() {
   const { pathname } = useLocation();

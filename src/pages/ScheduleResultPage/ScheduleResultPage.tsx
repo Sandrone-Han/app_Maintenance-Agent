@@ -325,7 +325,13 @@ export default function ScheduleResultPage() {
 
   const handleExportCsv = () => {
     const params = buildQueryParams();
-    window.location.href = `${API_BASE_URL}/schedule-results/export?${params.toString()}`;
+    const link = document.createElement('a');
+    link.href = `${API_BASE_URL}/schedule-results/export?${params.toString()}`;
+    link.download = 'schedule-results.csv';
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   };
 
   const acknowledgeException = async (id: string) => {

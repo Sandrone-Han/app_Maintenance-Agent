@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import * as oracledb from 'oracledb';
 import { DatabaseService } from '../database/database.service';
 
 type ScheduleResultRow = {
@@ -134,14 +135,6 @@ export class ScheduleAdjustmentService {
     const payload = this.parseCreatePayload(rawPayload);
     const result = await this.loadResult(payload.resultId);
 
-    const active = await this.loadActiveAdjustment(result.ID);
-    if (active) {
-      throw new BadRequestException('该排班结果已有生效临时调整');
-    }
-    if (await this.hasActiveSwap(result.ID)) {
-      throw new BadRequestException('该排班结果已有生效换班');
-    }
-
     const replacement = await this.loadMemberByName(payload.replacementPersonName);
     if (!replacement) throw new BadRequestException('替班人员不存在或未启用');
 
@@ -152,33 +145,37 @@ export class ScheduleAdjustmentService {
     }
 
     const id = randomUUID();
-    await this.databaseService.execute(
-      `INSERT INTO SCHEDULE_RESULT_ADJUSTMENT
-         (ID, RESULT_ID, JOB_ID, WORK_DATE, SHIFT_NAME, ORIGINAL_MEMBER_ID, ORIGINAL_PERSON_NAME, ORIGINAL_TEAM,
-          REPLACEMENT_MEMBER_ID, REPLACEMENT_PERSON_NAME, REPLACEMENT_TEAM, REPLACEMENT_ROLE_NAME, REPLACEMENT_SKILLS_TEXT,
-          LEAVE_TYPE, REASON, STATUS)
-       VALUES
-         (:id, :resultId, :jobId, TO_DATE(:workDate, 'YYYY-MM-DD'), :shiftName, :originalMemberId, :originalPersonName, :originalTeam,
-          :replacementMemberId, :replacementPersonName, :replacementTeam, :replacementRoleName, :replacementSkillsText,
-          :leaveType, :reason, N'生效')`,
-      {
-        id,
-        resultId: result.ID,
-        jobId: result.JOB_ID,
-        workDate: this.formatDate(result.WORK_DATE),
-        shiftName: result.SHIFT_NAME,
-        originalMemberId: result.MEMBER_ID,
-        originalPersonName: result.PERSON_NAME,
-        originalTeam: result.ACTUAL_TEAM ?? result.TEAM,
-        replacementMemberId: replacement.ID,
-        replacementPersonName: replacement.NAME,
-        replacementTeam: replacement.TEAM,
-        replacementRoleName: replacement.ROLE,
-        replacementSkillsText: replacement.SKILLS ?? '',
-        leaveType: payload.leaveType,
-        reason: payload.reason || null,
-      },
-    );
+    await this.databaseService.transaction(async (connection) => {
+      await this.lockScheduleResult(connection, result.ID);
+      await this.ensureResultAvailableForAdjustment(connection, result.ID);
+      await connection.execute(
+        `INSERT INTO SCHEDULE_RESULT_ADJUSTMENT
+           (ID, RESULT_ID, JOB_ID, WORK_DATE, SHIFT_NAME, ORIGINAL_MEMBER_ID, ORIGINAL_PERSON_NAME, ORIGINAL_TEAM,
+            REPLACEMENT_MEMBER_ID, REPLACEMENT_PERSON_NAME, REPLACEMENT_TEAM, REPLACEMENT_ROLE_NAME, REPLACEMENT_SKILLS_TEXT,
+            LEAVE_TYPE, REASON, STATUS)
+         VALUES
+           (:id, :resultId, :jobId, TO_DATE(:workDate, 'YYYY-MM-DD'), :shiftName, :originalMemberId, :originalPersonName, :originalTeam,
+            :replacementMemberId, :replacementPersonName, :replacementTeam, :replacementRoleName, :replacementSkillsText,
+            :leaveType, :reason, N'生效')`,
+        {
+          id,
+          resultId: result.ID,
+          jobId: result.JOB_ID,
+          workDate: this.formatDate(result.WORK_DATE),
+          shiftName: result.SHIFT_NAME,
+          originalMemberId: result.MEMBER_ID,
+          originalPersonName: result.PERSON_NAME,
+          originalTeam: result.ACTUAL_TEAM ?? result.TEAM,
+          replacementMemberId: replacement.ID,
+          replacementPersonName: replacement.NAME,
+          replacementTeam: replacement.TEAM,
+          replacementRoleName: replacement.ROLE,
+          replacementSkillsText: replacement.SKILLS ?? '',
+          leaveType: payload.leaveType,
+          reason: payload.reason || null,
+        },
+      );
+    });
 
     return { id, resultId: result.ID, status: '生效' };
   }
@@ -323,6 +320,52 @@ export class ScheduleAdjustmentService {
       { resultId },
     );
     return Number(rows[0]?.CNT ?? 0) > 0;
+  }
+
+  private async lockScheduleResult(connection: oracledb.Connection, resultId: string) {
+    await connection.execute(
+      'SELECT ID FROM SCHEDULE_RESULT WHERE ID = :resultId FOR UPDATE',
+      { resultId },
+      { outFormat: oracledb.OUT_FORMAT_OBJECT },
+    );
+  }
+
+  private async ensureResultAvailableForAdjustment(connection: oracledb.Connection, resultId: string) {
+    const activeAdjustmentCount = await this.countWithConnection(
+      connection,
+      `SELECT COUNT(*) AS CNT
+       FROM SCHEDULE_RESULT_ADJUSTMENT
+       WHERE RESULT_ID = :resultId AND STATUS = N'生效'`,
+      { resultId },
+    );
+    if (activeAdjustmentCount > 0) {
+      throw new BadRequestException('该排班结果已有生效临时调整');
+    }
+
+    const activeSwapCount = await this.countWithConnection(
+      connection,
+      `SELECT COUNT(*) AS CNT
+       FROM SCHEDULE_RESULT_SWAP
+       WHERE STATUS = N'生效'
+         AND (SOURCE_RESULT_ID = :resultId OR TARGET_RESULT_ID = :resultId)`,
+      { resultId },
+    );
+    if (activeSwapCount > 0) {
+      throw new BadRequestException('该排班结果已有生效换班');
+    }
+  }
+
+  private async countWithConnection(
+    connection: oracledb.Connection,
+    sql: string,
+    bindParams: Record<string, unknown>,
+  ) {
+    const result = await connection.execute<{ CNT: number }>(
+      sql,
+      bindParams,
+      { outFormat: oracledb.OUT_FORMAT_OBJECT },
+    );
+    return Number(result.rows?.[0]?.CNT ?? 0);
   }
 
   private async loadMemberByName(personName: string) {

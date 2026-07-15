@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import * as oracledb from 'oracledb';
 import { DatabaseService } from '../database/database.service';
 
 type ScheduleResultRow = {
@@ -117,46 +118,48 @@ export class ScheduleSwapService {
       throw new BadRequestException('只能在同一次排班任务内换班');
     }
 
-    await this.ensureResultAvailableForSwap(source.ID);
-    await this.ensureResultAvailableForSwap(target.ID);
-
     const recommendations = await this.buildRecommendations(source);
     if (!recommendations.some((item) => item.resultId === target.ID)) {
       throw new BadRequestException('目标班次不满足换班条件');
     }
 
     const id = randomUUID();
-    await this.databaseService.execute(
-      `INSERT INTO SCHEDULE_RESULT_SWAP
-         (ID, SOURCE_RESULT_ID, TARGET_RESULT_ID, JOB_ID,
-          SOURCE_WORK_DATE, SOURCE_SHIFT_NAME, SOURCE_PERSON_NAME, SOURCE_TEAM, SOURCE_ROLE_NAME, SOURCE_SKILLS_TEXT,
-          TARGET_WORK_DATE, TARGET_SHIFT_NAME, TARGET_PERSON_NAME, TARGET_TEAM, TARGET_ROLE_NAME, TARGET_SKILLS_TEXT,
-          REASON, STATUS)
-       VALUES
-         (:id, :sourceResultId, :targetResultId, :jobId,
-          TO_DATE(:sourceWorkDate, 'YYYY-MM-DD'), :sourceShiftName, :sourcePersonName, :sourceTeam, :sourceRoleName, :sourceSkillsText,
-          TO_DATE(:targetWorkDate, 'YYYY-MM-DD'), :targetShiftName, :targetPersonName, :targetTeam, :targetRoleName, :targetSkillsText,
-          :reason, N'生效')`,
-      {
-        id,
-        sourceResultId: source.ID,
-        targetResultId: target.ID,
-        jobId: source.JOB_ID,
-        sourceWorkDate: this.formatDate(source.WORK_DATE),
-        sourceShiftName: source.SHIFT_NAME,
-        sourcePersonName: source.PERSON_NAME,
-        sourceTeam: source.ACTUAL_TEAM ?? source.TEAM,
-        sourceRoleName: source.ROLE_NAME,
-        sourceSkillsText: source.SKILLS_TEXT ?? '',
-        targetWorkDate: this.formatDate(target.WORK_DATE),
-        targetShiftName: target.SHIFT_NAME,
-        targetPersonName: target.PERSON_NAME,
-        targetTeam: target.ACTUAL_TEAM ?? target.TEAM,
-        targetRoleName: target.ROLE_NAME,
-        targetSkillsText: target.SKILLS_TEXT ?? '',
-        reason: payload.reason || null,
-      },
-    );
+    await this.databaseService.transaction(async (connection) => {
+      await this.lockScheduleResults(connection, [source.ID, target.ID]);
+      await this.ensureResultAvailableForSwapForUpdate(connection, source.ID);
+      await this.ensureResultAvailableForSwapForUpdate(connection, target.ID);
+      await connection.execute(
+        `INSERT INTO SCHEDULE_RESULT_SWAP
+           (ID, SOURCE_RESULT_ID, TARGET_RESULT_ID, JOB_ID,
+            SOURCE_WORK_DATE, SOURCE_SHIFT_NAME, SOURCE_PERSON_NAME, SOURCE_TEAM, SOURCE_ROLE_NAME, SOURCE_SKILLS_TEXT,
+            TARGET_WORK_DATE, TARGET_SHIFT_NAME, TARGET_PERSON_NAME, TARGET_TEAM, TARGET_ROLE_NAME, TARGET_SKILLS_TEXT,
+            REASON, STATUS)
+         VALUES
+           (:id, :sourceResultId, :targetResultId, :jobId,
+            TO_DATE(:sourceWorkDate, 'YYYY-MM-DD'), :sourceShiftName, :sourcePersonName, :sourceTeam, :sourceRoleName, :sourceSkillsText,
+            TO_DATE(:targetWorkDate, 'YYYY-MM-DD'), :targetShiftName, :targetPersonName, :targetTeam, :targetRoleName, :targetSkillsText,
+            :reason, N'生效')`,
+        {
+          id,
+          sourceResultId: source.ID,
+          targetResultId: target.ID,
+          jobId: source.JOB_ID,
+          sourceWorkDate: this.formatDate(source.WORK_DATE),
+          sourceShiftName: source.SHIFT_NAME,
+          sourcePersonName: source.PERSON_NAME,
+          sourceTeam: source.ACTUAL_TEAM ?? source.TEAM,
+          sourceRoleName: source.ROLE_NAME,
+          sourceSkillsText: source.SKILLS_TEXT ?? '',
+          targetWorkDate: this.formatDate(target.WORK_DATE),
+          targetShiftName: target.SHIFT_NAME,
+          targetPersonName: target.PERSON_NAME,
+          targetTeam: target.ACTUAL_TEAM ?? target.TEAM,
+          targetRoleName: target.ROLE_NAME,
+          targetSkillsText: target.SKILLS_TEXT ?? '',
+          reason: payload.reason || null,
+        },
+      );
+    });
 
     return { id, sourceResultId: source.ID, targetResultId: target.ID, status: '生效' };
   }
@@ -288,6 +291,28 @@ export class ScheduleSwapService {
     }
   }
 
+  private async ensureResultAvailableForSwapForUpdate(connection: oracledb.Connection, resultId: string) {
+    if (await this.hasActiveAdjustmentForUpdate(connection, resultId)) {
+      throw new BadRequestException('该班次已有生效请假替班，不能换班');
+    }
+    if (await this.hasActiveSwapForUpdate(connection, resultId)) {
+      throw new BadRequestException('该班次已有生效换班，不能重复换班');
+    }
+  }
+
+  private async lockScheduleResults(connection: oracledb.Connection, resultIds: string[]) {
+    const sortedIds = [...resultIds].sort();
+    await connection.execute(
+      `SELECT ID
+       FROM SCHEDULE_RESULT
+       WHERE ID IN (:firstId, :secondId)
+       ORDER BY ID
+       FOR UPDATE`,
+      { firstId: sortedIds[0], secondId: sortedIds[1] },
+      { outFormat: oracledb.OUT_FORMAT_OBJECT },
+    );
+  }
+
   private async hasActiveAdjustment(resultId: string) {
     const rows = await this.databaseService.query<{ CNT: number }>(
       `SELECT COUNT(*) AS CNT
@@ -296,6 +321,17 @@ export class ScheduleSwapService {
       { resultId },
     );
     return Number(rows[0]?.CNT ?? 0) > 0;
+  }
+
+  private async hasActiveAdjustmentForUpdate(connection: oracledb.Connection, resultId: string) {
+    const count = await this.countWithConnection(
+      connection,
+      `SELECT COUNT(*) AS CNT
+       FROM SCHEDULE_RESULT_ADJUSTMENT
+       WHERE RESULT_ID = :resultId AND STATUS = N'生效'`,
+      { resultId },
+    );
+    return count > 0;
   }
 
   private async hasActiveSwap(resultId: string) {
@@ -307,6 +343,31 @@ export class ScheduleSwapService {
       { resultId },
     );
     return Number(rows[0]?.CNT ?? 0) > 0;
+  }
+
+  private async hasActiveSwapForUpdate(connection: oracledb.Connection, resultId: string) {
+    const count = await this.countWithConnection(
+      connection,
+      `SELECT COUNT(*) AS CNT
+       FROM SCHEDULE_RESULT_SWAP
+       WHERE STATUS = N'生效'
+         AND (SOURCE_RESULT_ID = :resultId OR TARGET_RESULT_ID = :resultId)`,
+      { resultId },
+    );
+    return count > 0;
+  }
+
+  private async countWithConnection(
+    connection: oracledb.Connection,
+    sql: string,
+    bindParams: Record<string, unknown>,
+  ) {
+    const result = await connection.execute<{ CNT: number }>(
+      sql,
+      bindParams,
+      { outFormat: oracledb.OUT_FORMAT_OBJECT },
+    );
+    return Number(result.rows?.[0]?.CNT ?? 0);
   }
 
   private async hasOtherAssignment(jobId: string, personName: string, date: string, excludedIds: string[]) {
