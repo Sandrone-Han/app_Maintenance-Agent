@@ -49,6 +49,14 @@ type ScheduleJobResponse = {
   status: string;
   resultCount: number;
   exceptionCount: number;
+  errorMessage?: string | null;
+  canPreview?: boolean;
+  nextActions?: string[];
+  optimizationSuggestions?: Array<{
+    title: string;
+    reason: string;
+    action: string;
+  }>;
   logs: string[];
 };
 
@@ -264,7 +272,7 @@ export default function ScheduleConfigPage() {
           description: `生成 ${response.resultCount} 条结果，异常 ${response.exceptionCount} 个`,
         });
       } else if (response.status === 'FAILED') {
-        toast.error('排班失败', { description: `异常 ${response.exceptionCount} 个` });
+        toast.error('排班失败', { description: response.errorMessage || `异常 ${response.exceptionCount} 个` });
       } else {
         toast.success('排班任务已完成', { description: `生成 ${response.resultCount} 条结果` });
       }
@@ -452,10 +460,11 @@ export default function ScheduleConfigPage() {
               <Button
                 variant="outline"
                 size="lg"
-                onClick={() => navigate('/schedule-result')}
+                onClick={() => navigate(`/schedule-result?jobId=${lastJob.id}`)}
+                disabled={lastJob.status === 'FAILED' && !lastJob.canPreview}
                 className="rounded-[8px]"
               >
-                查看排班结果
+                {lastJob.status === 'FAILED' ? '查看失败预览并编辑' : '查看排班结果'}
                 <ArrowRight className="size-4" />
               </Button>
             )}
@@ -476,6 +485,46 @@ export default function ScheduleConfigPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {lastJob?.status === 'FAILED' && (
+            <div className="rounded-[8px] border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+              <div className="font-medium">排班未通过上线校验</div>
+              <div className="mt-1">{lastJob.errorMessage || '请查看下方日志定位失败原因。'}</div>
+              {lastJob.optimizationSuggestions && lastJob.optimizationSuggestions.length > 0 && (
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  {lastJob.optimizationSuggestions.map((item) => (
+                    <div key={`${item.title}-${item.reason}`} className="rounded-[8px] border border-red-200 bg-white/70 p-3">
+                      <div className="font-medium text-red-900">{item.title}</div>
+                      <div className="mt-1 text-xs text-red-700">{item.reason}</div>
+                      <div className="mt-2 text-xs text-red-800">{item.action}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {lastJob.nextActions && lastJob.nextActions.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={!lastJob.canPreview}
+                    onClick={() => navigate(`/schedule-result?jobId=${lastJob.id}`)}
+                    className="rounded-[8px] border-red-300 bg-white text-red-800 hover:bg-red-100"
+                  >
+                    手动调整失败预览
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void startSchedule()}
+                    disabled={!canSubmit || isProcessing}
+                    className="rounded-[8px]"
+                  >
+                    按当前参数重新生成
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
           <div className="rounded-[8px] border bg-background p-4">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               {flowNodes.map((node, index) => {

@@ -337,8 +337,8 @@ export class ScheduleResultService {
     const validationResult = this.requiredText(payload.validationResult, '校验结果');
     const exceptionReason = this.optionalText(payload.exceptionReason) || null;
 
-    if (!['早班', '晚班', '长白班'].includes(shiftName)) {
-      throw new BadRequestException('班次只能是 早班、晚班、长白班');
+    if (!['早班', '晚班', '长白班', '休息'].includes(shiftName)) {
+      throw new BadRequestException('班次只能是 早班、晚班、长白班、休息');
     }
     if (!['是', '否'].includes(isBorrowed)) {
       throw new BadRequestException('是否借调只能是 是 或 否');
@@ -433,6 +433,20 @@ export class ScheduleResultService {
       filters.push(`sr.WORK_DATE <= TO_DATE(:endDate, 'YYYY-MM-DD')`);
       params.endDate = query.endDate;
     }
+    const effectiveFilters = [
+      ...filters,
+      `NOT (
+        sr.SHIFT_NAME = N'休息'
+        AND EXISTS (
+          SELECT 1
+          FROM SCHEDULE_RESULT_ADJUSTMENT adj_consumed
+          WHERE adj_consumed.JOB_ID = sr.JOB_ID
+            AND adj_consumed.WORK_DATE = sr.WORK_DATE
+            AND adj_consumed.REPLACEMENT_PERSON_NAME = sr.PERSON_NAME
+            AND adj_consumed.STATUS = N'生效'
+        )
+      )`,
+    ];
 
     const baseSource = query.jobId
       ? 'SCHEDULE_RESULT sr'
@@ -591,11 +605,11 @@ export class ScheduleResultService {
          LEFT JOIN SCHEDULE_RESULT_SWAP sws
            ON sws.SOURCE_RESULT_ID = sr.ID
           AND sws.STATUS = N'生效'
-         LEFT JOIN SCHEDULE_RESULT_SWAP swt
-           ON swt.TARGET_RESULT_ID = sr.ID
-          AND swt.STATUS = N'生效'
-         ${filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : ''}
-       )
+          LEFT JOIN SCHEDULE_RESULT_SWAP swt
+            ON swt.TARGET_RESULT_ID = sr.ID
+           AND swt.STATUS = N'生效'
+          WHERE ${effectiveFilters.join(' AND ')}
+        )
       WHERE RN = 1
       ORDER BY
         WORK_DATE ASC,

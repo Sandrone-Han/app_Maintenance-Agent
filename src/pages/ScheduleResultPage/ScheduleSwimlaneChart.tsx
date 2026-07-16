@@ -61,12 +61,14 @@ const SHIFT_ORDER: Record<string, number> = {
   早班: 1,
   晚班: 2,
   长白班: 3,
+  休息: 4,
 };
 
 const SHIFT_CHIP_STYLES: Record<string, string> = {
   早班: 'border-blue-300 bg-blue-50 text-blue-900',
   晚班: 'border-indigo-300 bg-indigo-50 text-indigo-900',
   长白班: 'border-emerald-300 bg-emerald-50 text-emerald-900',
+  休息: 'border-slate-300 bg-slate-50 text-slate-700',
 };
 
 const VALIDATION_MARK_STYLES: Record<string, string> = {
@@ -122,6 +124,7 @@ export function ScheduleSwimlaneChart({
 
     const cells = new Map<string, SwimlaneCell[]>();
     for (const item of results) {
+      if (item.shift === '休息') continue;
       const lane = getLaneName(item, mode);
       const key = `${lane}__${item.date}`;
       const list = cells.get(key) ?? [];
@@ -233,14 +236,18 @@ export function ScheduleSwimlaneChart({
                           <div className="h-full rounded-[6px] bg-muted/30" />
                         ) : (
                           <div className="flex h-full flex-col gap-1.5">
-                            {items.map((item) => (
+                            {items.map((item) => {
+                              const isRestCell = item.shift === '休息';
+                              return (
                               <button
                                 key={item.key}
                                 type="button"
                                 title={[
                                   getCellTitle(item),
                                   mode === 'team'
-                                    ? item.isAdjusted
+                                    ? isRestCell
+                                      ? '休息记录仅作为候选展示'
+                                      : item.isAdjusted
                                       ? '点击撤销临时调整'
                                       : item.isSwapped
                                         ? '点击撤销换班'
@@ -251,6 +258,7 @@ export function ScheduleSwimlaneChart({
                                 ].filter(Boolean).join('\n')}
                                 onClick={() => {
                                   if (mode !== 'team') return;
+                                  if (isRestCell) return;
                                   if (item.isAdjusted) {
                                     onCancelAdjustment?.(item.result);
                                     return;
@@ -262,13 +270,14 @@ export function ScheduleSwimlaneChart({
                                   if (canAdjustResult?.(item.result) === false) return;
                                   onAdjustResult?.(item.result);
                                 }}
-                                aria-disabled={mode !== 'team' || (!item.isAdjusted && !item.isSwapped && canAdjustResult?.(item.result) === false)}
+                                aria-disabled={mode !== 'team' || isRestCell || (!item.isAdjusted && !item.isSwapped && canAdjustResult?.(item.result) === false)}
                                 className={cn(
                                   'relative min-h-8 rounded-[6px] border px-2 py-1 text-left text-xs leading-tight',
-                                  mode === 'team' && 'transition hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary',
-                                  mode === 'team' && (item.isAdjusted || item.isSwapped) && 'cursor-pointer',
-                                  mode === 'team' && !item.isAdjusted && !item.isSwapped && canAdjustResult?.(item.result) !== false && 'cursor-pointer',
-                                  mode === 'team' && !item.isAdjusted && !item.isSwapped && canAdjustResult?.(item.result) === false && 'cursor-not-allowed opacity-60',
+                                  mode === 'team' && !isRestCell && 'transition hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                                  mode === 'team' && !isRestCell && (item.isAdjusted || item.isSwapped) && 'cursor-pointer',
+                                  mode === 'team' && !isRestCell && !item.isAdjusted && !item.isSwapped && canAdjustResult?.(item.result) !== false && 'cursor-pointer',
+                                  mode === 'team' && !isRestCell && !item.isAdjusted && !item.isSwapped && canAdjustResult?.(item.result) === false && 'cursor-not-allowed opacity-60',
+                                  mode === 'team' && isRestCell && 'cursor-default opacity-80',
                                   SHIFT_CHIP_STYLES[item.shift] ?? 'border-gray-300 bg-gray-50 text-gray-900',
                                   VALIDATION_MARK_STYLES[item.validationResult],
                                 )}
@@ -301,7 +310,8 @@ export function ScheduleSwimlaneChart({
                                   <span className="absolute right-1 top-1 size-1.5 rounded-full bg-amber-500" />
                                 )}
                               </button>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                       </div>

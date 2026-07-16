@@ -57,6 +57,7 @@ type SwapRecommendation = {
   reason: string;
   warnings: string[];
   isCrossTeam: boolean;
+  sourceType: '工作班次' | '休息班次';
   riskLevel: '低风险' | '有风险';
   riskScore: number;
 };
@@ -94,6 +95,8 @@ export class ScheduleSwapService {
   async getRecommendations(resultId: string) {
     if (!resultId) throw new BadRequestException('resultId 不能为空');
     const source = await this.loadResult(resultId);
+    await this.ensureResultIsLatest(source.ID);
+    this.ensureWorkSourceShift(source.SHIFT_NAME);
     await this.ensureResultAvailableForSwap(source.ID);
 
     return {
@@ -113,6 +116,9 @@ export class ScheduleSwapService {
 
     const source = await this.loadResult(payload.sourceResultId);
     const target = await this.loadResult(payload.targetResultId);
+    await this.ensureResultIsLatest(source.ID);
+    await this.ensureResultIsLatest(target.ID);
+    this.ensureWorkSourceShift(source.SHIFT_NAME);
     this.ensureSameScheduleWeek(source.WORK_DATE, target.WORK_DATE);
     if (source.JOB_ID !== target.JOB_ID) {
       throw new BadRequestException('只能在同一次排班任务内换班');
@@ -126,6 +132,8 @@ export class ScheduleSwapService {
     const id = randomUUID();
     await this.databaseService.transaction(async (connection) => {
       await this.lockScheduleResults(connection, [source.ID, target.ID]);
+      await this.ensureResultIsLatestForUpdate(connection, source.ID);
+      await this.ensureResultIsLatestForUpdate(connection, target.ID);
       await this.ensureResultAvailableForSwapForUpdate(connection, source.ID);
       await this.ensureResultAvailableForSwapForUpdate(connection, target.ID);
       await connection.execute(
@@ -208,6 +216,9 @@ export class ScheduleSwapService {
 
     const result: SwapRecommendation[] = [];
     for (const target of candidates) {
+      if (target.PERSON_NAME === source.PERSON_NAME) continue;
+      if (!(await this.isResultLatest(target.ID))) continue;
+      if (target.SHIFT_NAME === '休息' && await this.isRestConsumedByAdjustment(target)) continue;
       if (await this.hasActiveAdjustment(target.ID)) continue;
       if (await this.hasActiveSwap(target.ID)) continue;
 
@@ -228,10 +239,11 @@ export class ScheduleSwapService {
 
       const targetTeam = target.ACTUAL_TEAM ?? target.TEAM;
       const isCrossTeam = sourceTeam !== targetTeam;
+      const sourceType: SwapRecommendation['sourceType'] = target.SHIFT_NAME === '休息' ? '休息班次' : '工作班次';
       const priority = isCrossTeam ? 1 : 0;
       const reason = riskScore === 0
-        ? `${isCrossTeam ? '跨班组' : '同班组'}，低风险，角色和技能匹配`
-        : `${isCrossTeam ? '跨班组' : '同班组'}，兜底推荐，影响最小`;
+        ? `${isCrossTeam ? '跨班组' : '同班组'}，${sourceType}，低风险，角色和技能匹配`
+        : `${isCrossTeam ? '跨班组' : '同班组'}，${sourceType}，兜底推荐，影响最小`;
 
       result.push({
         resultId: target.ID,
@@ -245,6 +257,7 @@ export class ScheduleSwapService {
         reason,
         warnings,
         isCrossTeam,
+        sourceType,
         riskLevel: riskScore === 0 ? '低风险' : '有风险',
         riskScore,
       });
@@ -291,12 +304,31 @@ export class ScheduleSwapService {
     }
   }
 
+  private async ensureResultIsLatest(resultId: string) {
+    if (!(await this.isResultLatest(resultId))) {
+      throw new BadRequestException('只能对当前最新版本的排班结果进行换班');
+    }
+  }
+
+  private ensureWorkSourceShift(shiftName: string) {
+    if (shiftName === '休息') {
+      throw new BadRequestException('休息记录只能作为换班候选，不能作为换班发起班次');
+    }
+  }
+
   private async ensureResultAvailableForSwapForUpdate(connection: oracledb.Connection, resultId: string) {
     if (await this.hasActiveAdjustmentForUpdate(connection, resultId)) {
       throw new BadRequestException('该班次已有生效请假替班，不能换班');
     }
     if (await this.hasActiveSwapForUpdate(connection, resultId)) {
       throw new BadRequestException('该班次已有生效换班，不能重复换班');
+    }
+  }
+
+  private async ensureResultIsLatestForUpdate(connection: oracledb.Connection, resultId: string) {
+    const latestCount = await this.countWithConnection(connection, this.latestResultSql(), { resultId });
+    if (latestCount === 0) {
+      throw new BadRequestException('只能对当前最新版本的排班结果进行换班');
     }
   }
 
@@ -368,6 +400,63 @@ export class ScheduleSwapService {
       { outFormat: oracledb.OUT_FORMAT_OBJECT },
     );
     return Number(result.rows?.[0]?.CNT ?? 0);
+  }
+
+  private async isResultLatest(resultId: string) {
+    const rows = await this.databaseService.query<{ CNT: number }>(
+      this.latestResultSql(),
+      { resultId },
+    );
+    return Number(rows[0]?.CNT ?? 0) > 0;
+  }
+
+  private async isRestConsumedByAdjustment(result: ScheduleResultRow) {
+    const rows = await this.databaseService.query<{ CNT: number }>(
+      `SELECT COUNT(*) AS CNT
+       FROM SCHEDULE_RESULT_ADJUSTMENT
+       WHERE JOB_ID = :jobId
+         AND WORK_DATE = TO_DATE(:workDate, 'YYYY-MM-DD')
+         AND REPLACEMENT_PERSON_NAME = :personName
+         AND STATUS = N'生效'`,
+      {
+        jobId: result.JOB_ID,
+        workDate: this.formatDate(result.WORK_DATE),
+        personName: result.PERSON_NAME,
+      },
+    );
+    return Number(rows[0]?.CNT ?? 0) > 0;
+  }
+
+  private latestResultSql() {
+    return `
+      WITH target_result AS (
+        SELECT WORK_DATE
+        FROM SCHEDULE_RESULT
+        WHERE ID = :resultId
+      ),
+      latest_job AS (
+        SELECT JOB_ID
+        FROM (
+          SELECT
+            sj.ID AS JOB_ID,
+            ROW_NUMBER() OVER (ORDER BY sj.CREATED_AT DESC, sj.ID DESC) AS RN
+          FROM SCHEDULE_JOB sj
+          JOIN target_result target
+            ON target.WORK_DATE BETWEEN sj.START_DATE AND sj.END_DATE
+          WHERE EXISTS (
+            SELECT 1
+            FROM SCHEDULE_RESULT sr2
+            WHERE sr2.JOB_ID = sj.ID
+              AND sr2.WORK_DATE = target.WORK_DATE
+          )
+        )
+        WHERE RN = 1
+      )
+      SELECT COUNT(*) AS CNT
+      FROM SCHEDULE_RESULT sr
+      JOIN latest_job latest
+        ON latest.JOB_ID = sr.JOB_ID
+      WHERE sr.ID = :resultId`;
   }
 
   private async hasOtherAssignment(jobId: string, personName: string, date: string, excludedIds: string[]) {

@@ -125,11 +125,12 @@ function uniqueCount(results: IScheduleResult[], key: keyof IScheduleResult, fal
 }
 
 function buildStatistics(results: IScheduleResult[]) {
+  const workResults = results.filter((result) => result.shift !== '休息');
   const personMap = new Map<string, PersonStat>();
   const teamMap = new Map<string, TeamStat>();
   const shiftMap = new Map<string, { records: number; hours: number }>();
 
-  for (const result of results) {
+  for (const result of workResults) {
     const team = result.actualTeam || result.team || '未分组';
     const personName = result.personName || '未命名';
     const hours = getShiftHours(result.shift);
@@ -193,19 +194,20 @@ function buildStatistics(results: IScheduleResult[]) {
       shift,
       records: item.records,
       hours: item.hours,
-      percentage: results.length > 0 ? (item.records / results.length) * 100 : 0,
+      percentage: workResults.length > 0 ? (item.records / workResults.length) * 100 : 0,
     }))
     .sort((a, b) => getShiftOrder(a.shift) - getShiftOrder(b.shift));
 
   return {
-    totalRecords: results.length,
+    totalRecords: workResults.length,
     totalHours,
     peopleCount: personMap.size,
     teamCount: teamMap.size,
-    exceptionCount: results.filter(isException).length,
-    borrowedCount: results.filter((item) => item.isBorrowed === '是').length,
-    adjustedCount: uniqueCount(results, 'adjustmentId', (item) => Boolean(item.isAdjusted)),
-    swappedCount: uniqueCount(results, 'swapId', (item) => Boolean(item.isSwapped)),
+    restCount: results.length - workResults.length,
+    exceptionCount: workResults.filter(isException).length,
+    borrowedCount: workResults.filter((item) => item.isBorrowed === '是').length,
+    adjustedCount: uniqueCount(workResults, 'adjustmentId', (item) => Boolean(item.isAdjusted)),
+    swappedCount: uniqueCount(workResults, 'swapId', (item) => Boolean(item.isSwapped)),
     personStats: Array.from(personMap.values()).sort((a, b) => {
       if (b.hours !== a.hours) return b.hours - a.hours;
       return a.personName.localeCompare(b.personName, 'zh-Hans-CN');
@@ -288,7 +290,7 @@ function StatisticsContent({
   return (
     <div className="space-y-6">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard title="排班记录数" value={String(stats.totalRecords)} icon={CalendarClock} tone="bg-blue-100 text-blue-700" />
+        <SummaryCard title="工作记录数" value={String(stats.totalRecords)} icon={CalendarClock} tone="bg-blue-100 text-blue-700" />
         <SummaryCard title="总工时" value={`${stats.totalHours.toFixed(1)}h`} icon={Clock} tone="bg-emerald-100 text-emerald-700" />
         <SummaryCard title="参与人数" value={String(stats.peopleCount)} icon={Users} tone="bg-indigo-100 text-indigo-700" />
         <SummaryCard title="参与班组" value={String(stats.teamCount)} icon={Layers} tone="bg-sky-100 text-sky-700" />
@@ -296,6 +298,7 @@ function StatisticsContent({
         <SummaryCard title="借调数" value={String(stats.borrowedCount)} icon={Repeat2} tone="bg-cyan-100 text-cyan-700" />
         <SummaryCard title="临时调整数" value={String(stats.adjustedCount)} icon={Shuffle} tone="bg-violet-100 text-violet-700" />
         <SummaryCard title="换班数" value={String(stats.swappedCount)} icon={BarChart3} tone="bg-rose-100 text-rose-700" />
+        <SummaryCard title="休息记录数" value={String(stats.restCount)} icon={CalendarClock} tone="bg-slate-100 text-slate-700" />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.35fr_0.9fr]">

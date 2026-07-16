@@ -68,7 +68,7 @@ type AdjustmentRecommendation = {
   priority: number;
   reason: string;
   warnings: string[];
-  sourceType: '同班组' | '休息班组' | '其他班组';
+  sourceType: '同班组' | '休息班组' | '休息班次' | '其他班组';
   riskLevel: '低风险' | '有风险';
   riskScore: number;
 };
@@ -112,6 +112,8 @@ export class ScheduleAdjustmentService {
   async getRecommendations(resultId: string) {
     if (!resultId) throw new BadRequestException('resultId 不能为空');
     const result = await this.loadResult(resultId);
+    await this.ensureResultIsLatest(result.ID);
+    this.ensureWorkShift(result.SHIFT_NAME);
 
     const active = await this.loadActiveAdjustment(result.ID);
     if (active) {
@@ -134,6 +136,8 @@ export class ScheduleAdjustmentService {
   async create(rawPayload: unknown) {
     const payload = this.parseCreatePayload(rawPayload);
     const result = await this.loadResult(payload.resultId);
+    await this.ensureResultIsLatest(result.ID);
+    this.ensureWorkShift(result.SHIFT_NAME);
 
     const replacement = await this.loadMemberByName(payload.replacementPersonName);
     if (!replacement) throw new BadRequestException('替班人员不存在或未启用');
@@ -147,6 +151,7 @@ export class ScheduleAdjustmentService {
     const id = randomUUID();
     await this.databaseService.transaction(async (connection) => {
       await this.lockScheduleResult(connection, result.ID);
+      await this.ensureResultIsLatestForUpdate(connection, result.ID);
       await this.ensureResultAvailableForAdjustment(connection, result.ID);
       await connection.execute(
         `INSERT INTO SCHEDULE_RESULT_ADJUSTMENT
@@ -210,9 +215,15 @@ export class ScheduleAdjustmentService {
     const dayRows = await this.loadEffectiveDayRows(result.JOB_ID, workDate);
     const unavailableByTempLeave = await this.loadTempLeavePeople(workDate);
     const absentPeople = await this.loadAbsentPeople(workDate);
+    const unavailableBySwap = await this.loadSwapPeople(workDate);
+    const restRecordPeople = new Set(
+      dayRows
+        .filter((row) => row.RESULT_ID !== result.ID && row.SHIFT_NAME === '休息')
+        .map((row) => row.PERSON_NAME),
+    );
     const assignedPeople = new Set(
       dayRows
-        .filter((row) => row.RESULT_ID !== result.ID)
+        .filter((row) => row.RESULT_ID !== result.ID && row.SHIFT_NAME !== '休息')
         .map((row) => row.PERSON_NAME),
     );
     const restTeam = this.inferRestTeam(dayRows);
@@ -224,6 +235,7 @@ export class ScheduleAdjustmentService {
       .filter((member) => !assignedPeople.has(member.NAME))
       .filter((member) => !absentPeople.has(member.NAME))
       .filter((member) => !unavailableByTempLeave.has(member.NAME))
+      .filter((member) => !unavailableBySwap.has(member.NAME))
       .map((member) => {
         const warnings: string[] = [];
         if (member.ROLE !== result.ROLE_NAME) warnings.push('角色不完全一致');
@@ -231,9 +243,12 @@ export class ScheduleAdjustmentService {
         if (missingSkills.length > 0) warnings.push(`缺少技能：${missingSkills.join('、')}`);
         const riskScore = (member.ROLE === result.ROLE_NAME ? 0 : 10) + missingSkills.length * 5;
 
-        const teamPriority = member.TEAM === originalTeam ? 0 : member.TEAM === restTeam ? 1 : 2;
+        const isRestRecordCandidate = restRecordPeople.has(member.NAME);
+        const teamPriority = member.TEAM === originalTeam ? 0 : isRestRecordCandidate ? 1 : 2;
         const sourceType: AdjustmentRecommendation['sourceType'] =
-          member.TEAM === originalTeam
+          isRestRecordCandidate
+            ? '休息班次'
+            : member.TEAM === originalTeam
             ? '同班组'
             : member.TEAM === restTeam
               ? '休息班组'
@@ -330,6 +345,29 @@ export class ScheduleAdjustmentService {
     );
   }
 
+  private ensureWorkShift(shiftName: string) {
+    if (shiftName === '休息') {
+      throw new BadRequestException('休息记录只能作为替班候选，不能作为请假替班源班次');
+    }
+  }
+
+  private async ensureResultIsLatest(resultId: string) {
+    const rows = await this.databaseService.query<{ CNT: number }>(
+      this.latestResultSql(),
+      { resultId },
+    );
+    if (Number(rows[0]?.CNT ?? 0) === 0) {
+      throw new BadRequestException('只能对当前最新版本的排班结果进行临时调整');
+    }
+  }
+
+  private async ensureResultIsLatestForUpdate(connection: oracledb.Connection, resultId: string) {
+    const latestCount = await this.countWithConnection(connection, this.latestResultSql(), { resultId });
+    if (latestCount === 0) {
+      throw new BadRequestException('只能对当前最新版本的排班结果进行临时调整');
+    }
+  }
+
   private async ensureResultAvailableForAdjustment(connection: oracledb.Connection, resultId: string) {
     const activeAdjustmentCount = await this.countWithConnection(
       connection,
@@ -366,6 +404,38 @@ export class ScheduleAdjustmentService {
       { outFormat: oracledb.OUT_FORMAT_OBJECT },
     );
     return Number(result.rows?.[0]?.CNT ?? 0);
+  }
+
+  private latestResultSql() {
+    return `
+      WITH target_result AS (
+        SELECT WORK_DATE
+        FROM SCHEDULE_RESULT
+        WHERE ID = :resultId
+      ),
+      latest_job AS (
+        SELECT JOB_ID
+        FROM (
+          SELECT
+            sj.ID AS JOB_ID,
+            ROW_NUMBER() OVER (ORDER BY sj.CREATED_AT DESC, sj.ID DESC) AS RN
+          FROM SCHEDULE_JOB sj
+          JOIN target_result target
+            ON target.WORK_DATE BETWEEN sj.START_DATE AND sj.END_DATE
+          WHERE EXISTS (
+            SELECT 1
+            FROM SCHEDULE_RESULT sr2
+            WHERE sr2.JOB_ID = sj.ID
+              AND sr2.WORK_DATE = target.WORK_DATE
+          )
+        )
+        WHERE RN = 1
+      )
+      SELECT COUNT(*) AS CNT
+      FROM SCHEDULE_RESULT sr
+      JOIN latest_job latest
+        ON latest.JOB_ID = sr.JOB_ID
+      WHERE sr.ID = :resultId`;
   }
 
   private async loadMemberByName(personName: string) {
@@ -421,6 +491,25 @@ export class ScheduleAdjustmentService {
       { workDate },
     );
     return new Set(rows.map((row) => row.ORIGINAL_PERSON_NAME));
+  }
+
+  private async loadSwapPeople(workDate: string) {
+    const rows = await this.databaseService.query<{ PERSON_NAME: string }>(
+      `SELECT PERSON_NAME
+       FROM (
+         SELECT SOURCE_PERSON_NAME AS PERSON_NAME
+         FROM SCHEDULE_RESULT_SWAP
+         WHERE STATUS = N'生效'
+           AND SOURCE_WORK_DATE = TO_DATE(:workDate, 'YYYY-MM-DD')
+         UNION
+         SELECT TARGET_PERSON_NAME AS PERSON_NAME
+         FROM SCHEDULE_RESULT_SWAP
+         WHERE STATUS = N'生效'
+           AND TARGET_WORK_DATE = TO_DATE(:workDate, 'YYYY-MM-DD')
+       )`,
+      { workDate },
+    );
+    return new Set(rows.map((row) => row.PERSON_NAME));
   }
 
   private async loadAbsentPeople(workDate: string) {

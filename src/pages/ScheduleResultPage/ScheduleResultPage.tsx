@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { AlertTriangle, CheckCircle2, Download, Pencil, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -70,7 +71,7 @@ type AdjustmentRecommendation = {
   priority: number;
   reason: string;
   warnings: string[];
-  sourceType: '同班组' | '休息班组' | '其他班组';
+  sourceType: '同班组' | '休息班组' | '休息班次' | '其他班组';
   riskLevel: '低风险' | '有风险';
   riskScore: number;
 };
@@ -101,6 +102,7 @@ type SwapRecommendation = {
   reason: string;
   warnings: string[];
   isCrossTeam: boolean;
+  sourceType: '工作班次' | '休息班次';
   riskLevel: '低风险' | '有风险';
   riskScore: number;
 };
@@ -227,6 +229,8 @@ function getHighlightedFields(result: IScheduleResult) {
 }
 
 export default function ScheduleResultPage() {
+  const [searchParams] = useSearchParams();
+  const previewJobId = searchParams.get('jobId') ?? '';
   const initialFilters = useMemo(() => loadScheduleResultFilters(), []);
   const [results, setResults] = useState<IScheduleResult[]>([]);
   const [filterTeam, setFilterTeam] = useState(initialFilters.filterTeam);
@@ -258,6 +262,7 @@ export default function ScheduleResultPage() {
 
   const buildQueryParams = () => {
     const params = new URLSearchParams();
+    if (previewJobId) params.set('jobId', previewJobId);
     if (filterTeam !== 'all') params.set('team', filterTeam);
     if (filterValidation === 'exception') params.set('validationResult', '不通过');
     if (filterValidation === 'confirmed') params.set('validationResult', '已确认');
@@ -285,7 +290,7 @@ export default function ScheduleResultPage() {
 
   useEffect(() => {
     void loadResults();
-  }, [filterTeam, filterValidation, filterPersonName, startDate, endDate]);
+  }, [previewJobId, filterTeam, filterValidation, filterPersonName, startDate, endDate]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -301,6 +306,12 @@ export default function ScheduleResultPage() {
   const filteredResults = useMemo(() => {
     return results;
   }, [results]);
+
+  const tableResults = useMemo(() => {
+    return filteredResults.filter((item) => item.shift !== '休息');
+  }, [filteredResults]);
+
+  const hiddenRestCount = filteredResults.length - tableResults.length;
 
   const exceptionCount = useMemo(() => {
     return filteredResults.filter((item) => item.validationResult === '不通过').length;
@@ -493,10 +504,13 @@ export default function ScheduleResultPage() {
             <div>
               <CardTitle className="text-xl font-semibold">排班结果</CardTitle>
               <p className="mt-1 text-sm text-muted-foreground">
-                当前显示 {filteredResults.length} 条，未处理异常 {exceptionCount} 条，已确认 {confirmedCount} 条
+                当前显示 {tableResults.length} 条，未处理异常 {exceptionCount} 条，已确认 {confirmedCount} 条
+                {hiddenRestCount > 0 ? `，已隐藏休息 ${hiddenRestCount} 条` : ''}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                当前展示每个日期最新一次排班任务结果，可按人员查看过去和未来排班。
+                {previewJobId
+                  ? `当前正在查看任务 ${previewJobId} 的结果预览，可手动编辑异常记录。`
+                  : '当前展示每个日期最新一次排班任务结果，可按人员查看过去和未来排班。'}
               </p>
             </div>
             <div className="flex flex-wrap items-end gap-3">
@@ -628,13 +642,13 @@ export default function ScheduleResultPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredResults.length === 0 ? (
+                {tableResults.length === 0 ? (
                   <tr>
                     <td colSpan={15} className="border border-border px-3 py-12 text-center text-sm text-muted-foreground">
-                      当前筛选条件下没有排班结果。
+                      当前筛选条件下暂无工作班结果，休息记录已隐藏。
                     </td>
                   </tr>
-                ) : filteredResults.map((result) => {
+                ) : tableResults.map((result) => {
                   const highlightedFields = getHighlightedFields(result);
                   return (
                   <tr key={result.id} className={getRowClassName(result)}>
@@ -908,6 +922,13 @@ export default function ScheduleResultPage() {
                                 {item.isCrossTeam ? '跨班组' : '同班组'}
                               </span>
                               <span className={`rounded px-2 py-0.5 font-medium ${
+                                item.sourceType === '休息班次'
+                                  ? 'bg-slate-100 text-slate-900'
+                                  : 'bg-gray-100 text-gray-800'
+                              }`}>
+                                {item.sourceType}
+                              </span>
+                              <span className={`rounded px-2 py-0.5 font-medium ${
                                 item.riskLevel === '低风险'
                                   ? 'bg-emerald-100 text-emerald-900'
                                   : 'bg-amber-100 text-amber-900'
@@ -988,6 +1009,7 @@ export default function ScheduleResultPage() {
                       <SelectItem value="早班">早班</SelectItem>
                       <SelectItem value="晚班">晚班</SelectItem>
                       <SelectItem value="长白班">长白班</SelectItem>
+                      <SelectItem value="休息">休息</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
