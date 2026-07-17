@@ -84,6 +84,124 @@ Oracle 数据库
 └─ README.md                    # 项目说明文档
 ```
 
+## 测试前准备
+
+第一次测试前，先按下面顺序准备，确认环境、数据库和基础数据都正常后再进入页面操作。
+
+### 1. 确认基础环境
+
+确认本机已安装 Node.js、npm，并能连接 Oracle 数据库。
+
+```bash
+node -v
+npm -v
+```
+
+
+### 2. 安装依赖
+
+前端依赖：
+
+```bash
+npm install
+```
+
+后端依赖：
+
+```bash
+cd backend
+npm install
+```
+
+### 3. 配置数据库
+
+在 `backend/.env` 配置 Oracle 连接信息。最少需要：
+
+```env
+DB_USER=你的Oracle用户名
+DB_PASSWORD=你的Oracle密码
+DB_CONNECT_STRING=localhost:1521/XEPDB1
+```
+
+如需固定后端端口，可补充：
+
+```env
+PORT=3000
+```
+
+### 4. 初始化数据库
+
+只要是新库、空库，或迁移脚本有更新，都需要先执行：
+
+```bash
+cd backend
+npm run db:migrate
+npm run db:seed
+npm run db:verify
+```
+
+`db:migrate` 创建和更新表结构，`db:seed` 写入初始数据，`db:verify` 检查关键表是否可用。
+
+### 5. 运行代码检查
+
+测试前先确认前后端都能通过检查和构建。
+
+前端：
+
+```bash
+npm run typecheck
+npm run lint:eslint
+npx vite build
+```
+
+后端：
+
+```bash
+cd backend
+npm run typecheck
+npm run lint
+npm run build
+```
+
+### 6. 启动服务
+
+后端：
+
+```bash
+cd backend
+npm run start:dev
+```
+
+前端：
+
+```bash
+npm run dev
+```
+
+前端默认地址：
+
+```txt
+http://127.0.0.1:8001
+```
+
+后端默认地址：
+
+```txt
+http://localhost:3000/api
+```
+
+### 7. 测试前确认基础数据
+
+进入页面前，先确认这些数据存在并可用：
+
+- 班组管理：A1、A2、A3、B 组人员已存在，人员状态为启用。
+- 班次配置：早班、晚班、长白班存在。
+- 休假信息：可以为空，但后续请假测试需要添加记录。
+- 班组排班记录：A1/A2/A3 轮换状态存在。
+- 人员技能：组长、组员、电工、注塑维修等关键技能配置完整。
+
+第一轮测试建议先不加特殊要求、不加请假，先生成一周基础排班；确认基础排班稳定后，再测试请假替班、换班、统计和 CSV 导出。
+
 ## 本地启动
 
 ### 1. 启动 Oracle

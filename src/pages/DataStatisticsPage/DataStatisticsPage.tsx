@@ -23,7 +23,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import type { IScheduleResult } from '@/data/scheduleresult';
+import type { IScheduleResult } from '@/types/schedule';
 import { apiGet } from '@/lib/api';
 
 type StatisticsTab = 'week' | 'range';

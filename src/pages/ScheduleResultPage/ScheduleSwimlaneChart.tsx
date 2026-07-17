@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Users, Workflow } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import type { IScheduleResult } from '@/data/scheduleresult';
+import type { IScheduleResult } from '@/types/schedule';
 import { cn } from '@/lib/utils';
 
 type SwimlaneMode = 'person' | 'team';

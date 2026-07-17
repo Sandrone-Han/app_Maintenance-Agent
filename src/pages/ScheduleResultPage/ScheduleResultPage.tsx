@@ -22,7 +22,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import type { IScheduleResult } from '@/data/scheduleresult';
+import type { IScheduleResult } from '@/types/schedule';
 import { API_BASE_URL, apiGet, apiPost, apiPut } from '@/lib/api';
 import { ScheduleSwimlaneChart } from './ScheduleSwimlaneChart';
 
