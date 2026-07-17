@@ -132,6 +132,7 @@ type HighlightField =
   | 'actualTeam'
   | 'exceptionReason';
 
+// 日期格式化工具，供默认筛选时间范围使用。
 function formatDate(date: Date) {
   return [
     date.getFullYear(),
@@ -140,12 +141,14 @@ function formatDate(date: Date) {
   ].join('-');
 }
 
+// 基于当前日期偏移天数，生成默认查询窗口。
 function addDays(date: Date, days: number) {
   const result = new Date(date);
   result.setDate(result.getDate() + days);
   return result;
 }
 
+// 排班结果筛选默认值：默认查看前后 30 天的最新结果。
 function getDefaultScheduleResultFilters(): ScheduleResultFilterState {
   return {
     filterTeam: 'all',
@@ -156,6 +159,7 @@ function getDefaultScheduleResultFilters(): ScheduleResultFilterState {
   };
 }
 
+// 从本地缓存恢复筛选条件，避免用户刷新后丢失查询上下文。
 function loadScheduleResultFilters() {
   const defaults = getDefaultScheduleResultFilters();
   try {
@@ -174,6 +178,7 @@ function loadScheduleResultFilters() {
   }
 }
 
+// 将排班结果行转换为编辑表单结构。
 function toEditForm(result: IScheduleResult): EditScheduleResultForm {
   return {
     shiftName: result.shift,
@@ -190,6 +195,7 @@ function toEditForm(result: IScheduleResult): EditScheduleResultForm {
   };
 }
 
+// 根据异常原因标记需要高亮的字段，帮助管理员定位问题列。
 function getHighlightedFields(result: IScheduleResult) {
   const fields = new Set<HighlightField>();
   const reason = result.exceptionReason ?? '';
@@ -228,10 +234,12 @@ function getHighlightedFields(result: IScheduleResult) {
   return fields;
 }
 
+// 排班结果页：查询、筛选、导出、编辑，并处理请假替班和换班。
 export default function ScheduleResultPage() {
   const [searchParams] = useSearchParams();
   const previewJobId = searchParams.get('jobId') ?? '';
   const initialFilters = useMemo(() => loadScheduleResultFilters(), []);
+  // 筛选与表格状态：支持任务预览、班组、人员、日期和异常状态过滤。
   const [results, setResults] = useState<IScheduleResult[]>([]);
   const [filterTeam, setFilterTeam] = useState(initialFilters.filterTeam);
   const [filterValidation, setFilterValidation] = useState(initialFilters.filterValidation);
@@ -242,6 +250,7 @@ export default function ScheduleResultPage() {
   const [editingResult, setEditingResult] = useState<IScheduleResult | null>(null);
   const [editForm, setEditForm] = useState<EditScheduleResultForm | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  // 请假替班弹窗状态：当前行、表单、候选人和保存/加载态。
   const [adjustingResult, setAdjustingResult] = useState<IScheduleResult | null>(null);
   const [adjustmentForm, setAdjustmentForm] = useState<AdjustmentForm>({
     leaveType: '请假',
@@ -252,6 +261,7 @@ export default function ScheduleResultPage() {
   const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
   const [isSavingAdjustment, setIsSavingAdjustment] = useState(false);
   const [adjustmentTab, setAdjustmentTab] = useState('leave');
+  // 换班弹窗状态：候选班次、目标班次和保存/加载态。
   const [swapRecommendations, setSwapRecommendations] = useState<SwapRecommendation[]>([]);
   const [isLoadingSwapRecommendations, setIsLoadingSwapRecommendations] = useState(false);
   const [isSavingSwap, setIsSavingSwap] = useState(false);
@@ -260,6 +270,7 @@ export default function ScheduleResultPage() {
     reason: '',
   });
 
+  // 将当前筛选条件转换为后端 schedule-results 查询参数。
   const buildQueryParams = () => {
     const params = new URLSearchParams();
     if (previewJobId) params.set('jobId', previewJobId);
@@ -272,6 +283,7 @@ export default function ScheduleResultPage() {
     return params;
   };
 
+  // 加载排班结果，后端负责按任务、人员、班组、日期和异常状态过滤。
   const loadResults = async () => {
     setIsLoading(true);
     try {
@@ -288,10 +300,12 @@ export default function ScheduleResultPage() {
     }
   };
 
+  // 筛选条件变化时自动刷新结果列表。
   useEffect(() => {
     void loadResults();
   }, [previewJobId, filterTeam, filterValidation, filterPersonName, startDate, endDate]);
 
+  // 缓存筛选条件，方便用户返回页面时继续使用上次视图。
   useEffect(() => {
     localStorage.setItem(
       SCHEDULE_RESULT_FILTERS_KEY,
@@ -299,6 +313,7 @@ export default function ScheduleResultPage() {
     );
   }, [filterTeam, filterValidation, filterPersonName, startDate, endDate]);
 
+  // 根据当前结果派生可选班组列表。
   const teams = useMemo(() => {
     return Array.from(new Set(results.map((item) => item.team))).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
   }, [results]);
@@ -307,12 +322,14 @@ export default function ScheduleResultPage() {
     return results;
   }, [results]);
 
+  // 休息记录仍保留在完整结果中，只有表格可视层隐藏，导出/候选/统计口径不受影响。
   const tableResults = useMemo(() => {
     return filteredResults.filter((item) => item.shift !== '休息');
   }, [filteredResults]);
 
   const hiddenRestCount = filteredResults.length - tableResults.length;
 
+  // 顶部摘要数据：异常、已确认异常和隐藏休息记录数量。
   const exceptionCount = useMemo(() => {
     return filteredResults.filter((item) => item.validationResult === '不通过').length;
   }, [filteredResults]);
@@ -321,6 +338,7 @@ export default function ScheduleResultPage() {
     return filteredResults.filter((item) => item.validationResult === '已确认').length;
   }, [filteredResults]);
 
+  // 根据结果状态给表格行上色，突出异常、已确认和已调整记录。
   const getRowClassName = (result: IScheduleResult) => {
     if (result.validationResult === '不通过') return 'bg-red-50 hover:bg-red-100/70';
     if (result.validationResult === '已确认') return 'bg-amber-50 hover:bg-amber-100/70';
@@ -328,13 +346,16 @@ export default function ScheduleResultPage() {
     return 'hover:bg-muted/40';
   };
 
+  // 根据异常原因高亮对应单元格。
   const getCellClassName = (highlightedFields: Set<HighlightField>, field: HighlightField, extra = '') => {
     const base = `border border-border px-3 py-2 text-sm ${extra}`;
     if (!highlightedFields.has(field)) return base;
     return `${base} bg-red-100 text-red-950 ring-1 ring-inset ring-red-300`;
   };
 
+  // 导出当前筛选条件下的后端 CSV，保持与查询条件一致。
   const handleExportCsv = () => {
+    // 导出走后端完整筛选结果，不跟随表格隐藏休息的视觉规则。
     const params = buildQueryParams();
     const link = document.createElement('a');
     link.href = `${API_BASE_URL}/schedule-results/export?${params.toString()}`;
@@ -345,6 +366,7 @@ export default function ScheduleResultPage() {
     link.remove();
   };
 
+  // 管理员确认异常后刷新列表，保留异常记录但改变处理状态。
   const acknowledgeException = async (id: string) => {
     try {
       await apiPut(`/schedule-results/${id}/acknowledge-exception`, {});
@@ -355,6 +377,7 @@ export default function ScheduleResultPage() {
     }
   };
 
+  // 打开手工编辑弹窗并初始化表单。
   const openEditDialog = (result: IScheduleResult) => {
     setEditingResult(result);
     setEditForm(toEditForm(result));
@@ -365,10 +388,12 @@ export default function ScheduleResultPage() {
     setEditForm(null);
   };
 
+  // 更新编辑弹窗中的单个字段。
   const updateEditForm = (field: keyof EditScheduleResultForm, value: string) => {
     setEditForm((current) => current ? { ...current, [field]: value } : current);
   };
 
+  // 保存手工编辑后的排班结果。
   const saveEditResult = async () => {
     if (!editingResult || !editForm) return;
     setIsSavingEdit(true);
@@ -385,7 +410,9 @@ export default function ScheduleResultPage() {
     }
   };
 
+  // 打开请假替班/换班弹窗，同时请求两类推荐候选。
   const openAdjustmentDialog = async (result: IScheduleResult) => {
+    // 班组图同一入口加载请假替班和换班候选，后端保证二者互斥和候选可执行。
     setAdjustingResult(result);
     setAdjustmentTab('leave');
     setAdjustmentForm({
@@ -424,6 +451,7 @@ export default function ScheduleResultPage() {
     }
   };
 
+  // 关闭调整弹窗并清理临时候选和表单状态。
   const closeAdjustmentDialog = () => {
     setAdjustingResult(null);
     setRecommendations([]);
@@ -433,6 +461,7 @@ export default function ScheduleResultPage() {
     setAdjustmentTab('leave');
   };
 
+  // 保存请假替班：用后端推荐候选替换当前人员。
   const saveAdjustment = async () => {
     if (!adjustingResult || !adjustmentForm.replacementPersonName) return;
     setIsSavingAdjustment(true);
@@ -453,6 +482,7 @@ export default function ScheduleResultPage() {
     }
   };
 
+  // 撤销已生效的请假替班记录。
   const cancelAdjustment = async (result: IScheduleResult) => {
     if (!result.adjustmentId) return;
     if (!window.confirm(`确认撤销 ${result.date} ${result.shift} 的临时调整吗？`)) return;
@@ -465,6 +495,7 @@ export default function ScheduleResultPage() {
     }
   };
 
+  // 保存换班：将当前排班与目标排班互换。
   const saveSwap = async () => {
     if (!adjustingResult || !swapForm.targetResultId) return;
     setIsSavingSwap(true);
@@ -484,6 +515,7 @@ export default function ScheduleResultPage() {
     }
   };
 
+  // 撤销已生效的换班记录。
   const cancelSwap = async (result: IScheduleResult) => {
     if (!result.swapId) return;
     if (!window.confirm(`确认撤销 ${result.date} ${result.shift} 的换班吗？`)) return;
@@ -498,6 +530,7 @@ export default function ScheduleResultPage() {
 
   return (
     <div className="space-y-6">
+      {/* 顶部筛选和导出区：展示统计摘要并提供查询条件。 */}
       <Card className="rounded-[8px] border-border shadow-sm">
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -597,6 +630,7 @@ export default function ScheduleResultPage() {
         </CardHeader>
       </Card>
 
+      {/* 泳道图：按班组/人员维度展示排班矩阵，并作为调整入口。 */}
       <ScheduleSwimlaneChart
         results={filteredResults}
         canAdjustResult={() => true}
@@ -615,6 +649,7 @@ export default function ScheduleResultPage() {
       <Card className="rounded-[8px] border-border shadow-sm">
         <CardContent className="p-0">
           <div className="w-full overflow-x-auto">
+            {/* 明细表：完整展示每条排班结果，异常列会按原因高亮。 */}
             <table className="w-full min-w-[1480px] border-collapse">
               <thead>
                 <tr className="bg-muted/60">
@@ -745,6 +780,7 @@ export default function ScheduleResultPage() {
         </CardContent>
       </Card>
 
+      {/* 排班调整弹窗：同一入口内处理请假替班和换班。 */}
       <Dialog open={Boolean(adjustingResult)} onOpenChange={(open) => {
         if (!open) closeAdjustmentDialog();
       }}>
@@ -980,6 +1016,7 @@ export default function ScheduleResultPage() {
         </DialogContent>
       </Dialog>
 
+      {/* 手工编辑弹窗：用于管理员直接修正单条排班结果。 */}
       <Dialog open={Boolean(editingResult)} onOpenChange={(open) => {
         if (!open) closeEditDialog();
       }}>

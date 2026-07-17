@@ -13,9 +13,11 @@ type TeamScheduleRecordRow = {
 };
 
 @Injectable()
+// 班组轮换记录服务：维护 A1/A2/A3 当前班次和下一班次状态。
 export class TeamScheduleRecordService {
   constructor(private readonly databaseService: DatabaseService) {}
 
+  // 查询当前班组轮换状态，供排班配置和记录页展示。
   async findAll() {
     const rows = await this.databaseService.query<TeamScheduleRecordRow>(`
       SELECT ID, TEAM, TYPE, CURRENT_SHIFT, CURRENT_SHIFT_DATE, NEXT_SHIFT, NEXT_SHIFT_DATE
@@ -34,6 +36,7 @@ export class TeamScheduleRecordService {
     }));
   }
 
+  // 重置默认轮换基准，用 MERGE 保证有记录则更新、无记录则插入。
   async resetDefault(baseDate?: string) {
     const date = baseDate && /^\d{4}-\d{2}-\d{2}$/.test(baseDate)
       ? baseDate
@@ -81,6 +84,7 @@ export class TeamScheduleRecordService {
     };
   }
 
+  // Oracle Date 转 yyyy-MM-dd，统一前端展示和接口入参格式。
   private formatDate(date: Date) {
     return [
       date.getFullYear(),
@@ -89,6 +93,7 @@ export class TeamScheduleRecordService {
     ].join('-');
   }
 
+  // 计算下一班次日期。
   private addDays(date: Date, days: number) {
     const result = new Date(date);
     result.setDate(result.getDate() + days);

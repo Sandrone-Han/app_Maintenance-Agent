@@ -84,6 +84,7 @@ type EmployeeAgentStoredState = {
   lastResponse: AgentResponse | null;
 };
 
+// 日期格式化工具，服务于查询时间范围默认值。
 function formatDate(date: Date) {
   return [
     date.getFullYear(),
@@ -92,12 +93,14 @@ function formatDate(date: Date) {
   ].join('-');
 }
 
+// 基于当前日期偏移天数，生成默认结束日期。
 function addDays(date: Date, days: number) {
   const result = new Date(date);
   result.setDate(result.getDate() + days);
   return result;
 }
 
+// 默认欢迎消息，作为员工查询对话的初始上下文。
 function getDefaultChatMessages(): ChatMessage[] {
   return [
     {
@@ -107,6 +110,7 @@ function getDefaultChatMessages(): ChatMessage[] {
   ];
 }
 
+// 员工查询页的默认状态：输入框、时间范围、聊天记录和上次结构化结果。
 function getDefaultEmployeeAgentState(): EmployeeAgentStoredState {
   return {
     message: '',
@@ -117,6 +121,7 @@ function getDefaultEmployeeAgentState(): EmployeeAgentStoredState {
   };
 }
 
+// 从 localStorage 恢复上次查询状态，失败时退回默认值。
 function loadEmployeeAgentState() {
   const defaults = getDefaultEmployeeAgentState();
   try {
@@ -135,8 +140,10 @@ function loadEmployeeAgentState() {
   }
 }
 
+// 员工查询页：用聊天形式调用后端员工查询接口，并展示结构化排班结果。
 export default function EmployeeAgentPage() {
   const initialState = useMemo(() => loadEmployeeAgentState(), []);
+  // 页面状态：查询输入、时间范围、聊天消息和最近一次查询结果。
   const [message, setMessage] = useState(initialState.message);
   const [startDate, setStartDate] = useState(initialState.startDate);
   const [endDate, setEndDate] = useState(initialState.endDate);
@@ -149,6 +156,7 @@ export default function EmployeeAgentPage() {
     return lastResponse !== null || chatMessages.some((item) => item.role === 'user');
   }, [chatMessages, lastResponse]);
 
+  // 将当前会话缓存到本地，刷新页面后仍可恢复上下文。
   useEffect(() => {
     localStorage.setItem(
       EMPLOYEE_AGENT_STATE_KEY,
@@ -156,6 +164,7 @@ export default function EmployeeAgentPage() {
     );
   }, [message, startDate, endDate, chatMessages, lastResponse]);
 
+  // 发送用户问题到后端员工智能查询接口，并把回答写入聊天流。
   const askAgent = async (question = message) => {
     const text = question.trim();
     if (!text || isLoading) return;
@@ -180,6 +189,7 @@ export default function EmployeeAgentPage() {
     }
   };
 
+  // 清空历史对话和结构化结果，保留默认欢迎语。
   const clearChatHistory = () => {
     setChatMessages(getDefaultChatMessages());
     setLastResponse(null);
@@ -188,6 +198,7 @@ export default function EmployeeAgentPage() {
 
   return (
     <div className="mx-auto flex min-h-[calc(100vh-120px)] w-full max-w-6xl flex-col">
+      {/* 页面头部：时间范围筛选和清空历史入口。 */}
       <header className="mb-5 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <span className="flex size-10 items-center justify-center rounded-full bg-primary text-primary-foreground">
@@ -221,6 +232,7 @@ export default function EmployeeAgentPage() {
         </div>
       </header>
 
+      {/* 聊天内容区：快捷问题、用户/助手消息和结构化结果卡片。 */}
       <main className="flex-1 space-y-5 pb-36">
         <div className="flex flex-wrap gap-2">
           {QUICK_QUESTIONS.map((question) => (
@@ -392,6 +404,7 @@ export default function EmployeeAgentPage() {
         )}
       </main>
 
+      {/* 底部固定输入区：支持 Enter 发送、Shift+Enter 换行。 */}
       <div className="sticky bottom-0 -mx-2 border-t bg-background/95 px-2 py-4 backdrop-blur">
         <div className="mx-auto flex max-w-4xl items-end gap-3 rounded-[8px] border bg-background p-3 shadow-lg">
           <Textarea

@@ -67,15 +67,20 @@ type NormalizedScheduleResultUpdate = {
 };
 
 @Injectable()
+// 排班结果服务：负责结果查询、CSV 导出、异常确认和手工编辑校验。
 export class ScheduleResultService {
   constructor(private readonly databaseService: DatabaseService) {}
 
+  // 查询排班结果并转换为前端 DTO。
   async findAll(query: Record<string, string | undefined>) {
+    // 默认返回“可执行口径”的结果：原始排班叠加生效请假替班和换班覆盖层。
     const rows = await this.queryRows(query);
     return rows.map((row) => this.toDto(row));
   }
 
+  // 按当前筛选条件导出 CSV 内容。
   async exportCsv(query: Record<string, string | undefined>) {
+    // CSV 与页面查询共用同一覆盖口径，避免导出与表格/泳道图看到的人不一致。
     const rows = await this.findAll(query);
     const header = [
       '日期',
@@ -125,6 +130,7 @@ export class ScheduleResultService {
       .join('\n');
   }
 
+  // 确认异常：将未通过校验的记录标记为已确认。
   async acknowledgeException(id: string) {
     await this.databaseService.execute(
       `UPDATE SCHEDULE_RESULT
@@ -142,8 +148,10 @@ export class ScheduleResultService {
     return { id, status: '已确认异常', validationResult: '已确认' };
   }
 
+  // 手工编辑排班结果，并在保存前做冲突校验。
   async updateResult(id: string, rawPayload: unknown) {
     const current = await this.loadResultForUpdate(id);
+    // 已有临时覆盖时不允许直接改原始结果，必须先撤销覆盖以保持追溯链清晰。
     if (await this.hasActiveAdjustment(id)) {
       throw new BadRequestException('该排班结果存在本周临时调整，请先撤销调整后再编辑原始排班');
     }
@@ -181,10 +189,12 @@ export class ScheduleResultService {
     };
   }
 
+  // 确认排班结果存在。
   private async ensureExists(id: string) {
     await this.loadResultForUpdate(id);
   }
 
+  // 判断结果是否已有生效的请假替班调整。
   private async hasActiveAdjustment(resultId: string) {
     const rows = await this.databaseService.query<{ CNT: number }>(
       `SELECT COUNT(*) AS CNT
@@ -196,6 +206,7 @@ export class ScheduleResultService {
     return Number(rows[0]?.CNT ?? 0) > 0;
   }
 
+  // 判断结果是否已有生效的换班调整。
   private async hasActiveSwap(resultId: string) {
     const rows = await this.databaseService.query<{ CNT: number }>(
       `SELECT COUNT(*) AS CNT
@@ -208,6 +219,7 @@ export class ScheduleResultService {
     return Number(rows[0]?.CNT ?? 0) > 0;
   }
 
+  // 加载编辑目标及同日同任务上下文，用于校验。
   private async loadResultForUpdate(id: string) {
     const rows = await this.databaseService.query<ScheduleResultForUpdateRow>(
       `SELECT
@@ -236,6 +248,7 @@ export class ScheduleResultService {
     return rows[0];
   }
 
+  // 校验手工编辑是否造成同人同日多班、休息冲突或调整冲突。
   private async validateManualUpdate(
     id: string,
     current: ScheduleResultForUpdateRow,
@@ -319,6 +332,7 @@ export class ScheduleResultService {
     return Array.from(new Set(errors));
   }
 
+  // 解析编辑请求体并补齐规范字段。
   private parseUpdatePayload(rawPayload: unknown): NormalizedScheduleResultUpdate {
     if (!rawPayload || typeof rawPayload !== 'object') {
       throw new BadRequestException('请求体不能为空');
@@ -376,6 +390,7 @@ export class ScheduleResultService {
     return typeof value === 'string' ? value.trim() : '';
   }
 
+  // 根据校验结果推导展示状态。
   private statusFromValidation(validationResult: string) {
     if (validationResult === '通过') return '人工修正';
     if (validationResult === '已确认') return '已确认异常';
@@ -391,7 +406,9 @@ export class ScheduleResultService {
     return ['A1', 'A2', 'A3'].find((team) => !workingTeams.has(team));
   }
 
+  // 查询结果主 SQL，集中处理任务、班组、人员、日期和异常筛选。
   private async queryRows(query: Record<string, string | undefined>) {
+    // 过滤条件作用在最终展示口径上：人员和班组会优先使用调整/换班覆盖后的值。
     const filters: string[] = [];
     const params: Record<string, string> = {};
 
@@ -433,6 +450,7 @@ export class ScheduleResultService {
       filters.push(`sr.WORK_DATE <= TO_DATE(:endDate, 'YYYY-MM-DD')`);
       params.endDate = query.endDate;
     }
+    // 被请假替班消耗的休息记录不再返回，避免同人同日既休息又上班。
     const effectiveFilters = [
       ...filters,
       `NOT (
@@ -473,6 +491,7 @@ export class ScheduleResultService {
            ON latest_job.WORK_DATE = sr.WORK_DATE
           AND latest_job.JOB_ID = sr.JOB_ID`;
 
+    // SQL 中同时处理最新任务筛选、请假替班覆盖、换班双方互换，服务层只做 DTO 映射。
     return this.databaseService.query<ScheduleResultRow>(
       `SELECT
          ID,
@@ -625,6 +644,7 @@ export class ScheduleResultService {
     );
   }
 
+  // 将数据库行转换成前端排班结果结构。
   private toDto(row: ScheduleResultRow) {
     return {
       id: row.ID,
@@ -655,6 +675,7 @@ export class ScheduleResultService {
     };
   }
 
+  // Oracle Date 转 yyyy-MM-dd。
   private formatDate(date: Date) {
     return [
       date.getFullYear(),
@@ -667,6 +688,7 @@ export class ScheduleResultService {
     return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getDay()];
   }
 
+  // CSV 字段转义，避免逗号、引号和换行破坏文件结构。
   private escapeCsv(value: unknown) {
     const text = value == null ? '' : String(value);
     if (/[",\n\r]/.test(text)) {

@@ -23,11 +23,14 @@ const shiftVariant: Record<string, string> = {
   长白班: 'bg-emerald-100 text-emerald-900',
 };
 
+// 班组排班记录页：查看 A/B 班组当前班次、下一班次和轮换连续性。
 export default function TeamScheduleRecordPage() {
+  // 页面状态：轮换记录列表、刷新加载态和恢复默认轮换加载态。
   const [records, setRecords] = useState<TeamScheduleRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
+  // 从后端读取最新班组轮换状态。
   const loadRecords = async () => {
     setIsLoading(true);
     try {
@@ -44,6 +47,7 @@ export default function TeamScheduleRecordPage() {
     void loadRecords();
   }, []);
 
+  // 将 A1/A2/A3 恢复到默认轮换基准，便于重新开始排班。
   const resetDefaultRecords = async () => {
     const confirmed = window.confirm('确认恢复默认轮换？这会把 A1/A2/A3 重置为 A1早班、A2晚班、A3休息。');
     if (!confirmed) return;
@@ -64,6 +68,7 @@ export default function TeamScheduleRecordPage() {
 
   return (
     <div className="space-y-6">
+      {/* 标题和操作区：支持恢复默认轮换与手动刷新。 */}
       <Card className="rounded-[8px] border-border shadow-sm">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between gap-3">
@@ -100,6 +105,7 @@ export default function TeamScheduleRecordPage() {
         </CardHeader>
       </Card>
 
+      {/* 只读表格区：用 Badge 区分当前班次状态。 */}
       <Card className="rounded-[8px] border-border shadow-sm">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -138,6 +144,7 @@ export default function TeamScheduleRecordPage() {
   );
 }
 
+// 将 Date 转成后端接口使用的 yyyy-MM-dd 字符串。
 function formatDate(date: Date) {
   return [
     date.getFullYear(),

@@ -1,4 +1,6 @@
 // EXPORTS: IShiftType, MOCK_SHIFT_TYPES
+
+// 班次基础配置结构，描述班次类型、轮换规则和上下班时间。
 export interface IShiftType {
   id: string
   shiftCategory: '早班/晚班' | '长白班'
@@ -8,6 +10,7 @@ export interface IShiftType {
   endTime: string
 }
 
+// 系统内置的班次示例数据，用于班组管理和排班引擎初始化。
 export const MOCK_SHIFT_TYPES: IShiftType[] = [
   {
     id: '1',

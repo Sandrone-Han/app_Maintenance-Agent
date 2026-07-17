@@ -63,12 +63,14 @@ const REST_ACTIONS: SpecialRequirementAction[] = ['mustRest', 'cannotWork'];
 const WORK_ACTIONS: SpecialRequirementAction[] = ['mustWork', 'cannotShift', 'onlyShift'];
 
 @Injectable()
+// 排班任务服务：负责参数校验、加载上下文、调用排班引擎并落库结果。
 export class ScheduleJobService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly scheduleEngineService: ScheduleEngineService,
   ) {}
 
+  // 创建排班任务并立即执行，最终写入任务、结果、日志和班组轮换状态。
   async create(rawPayload: unknown) {
     const payload = this.parsePayload(rawPayload);
     const jobId = randomUUID();
@@ -91,6 +93,7 @@ export class ScheduleJobService {
       specialRequirements: payload.specialRequirements,
     });
 
+    // 任务结果和日志在同一事务内写入，避免只生成部分数据。
     await this.databaseService.transaction(async (connection) => {
       await connection.execute(
         `INSERT INTO SCHEDULE_JOB
@@ -171,6 +174,7 @@ export class ScheduleJobService {
     };
   }
 
+  // 查询单个任务状态、结果数量和异常数量。
   async findOne(id: string) {
     const rows = await this.databaseService.query<JobRow>(
       `SELECT ID, WEEKEND_MACHINE_COUNT, START_DATE, END_DATE, STATUS, ERROR_MESSAGE, CREATED_AT, FINISHED_AT
@@ -195,6 +199,7 @@ export class ScheduleJobService {
     };
   }
 
+  // 查询任务执行日志，供前端流程区展示。
   async findLogs(id: string) {
     const rows = await this.databaseService.query<{
       ID: string;
@@ -217,12 +222,14 @@ export class ScheduleJobService {
     }));
   }
 
+  // 删除排班任务记录。
   async remove(id: string) {
     await this.findOne(id);
     await this.databaseService.execute('DELETE FROM SCHEDULE_JOB WHERE ID = :id', { id });
     return { id };
   }
 
+  // 解析并校验排班任务请求体，统一日期、开机数和特殊要求结构。
   private parsePayload(rawPayload: unknown): NormalizedScheduleJobPayload {
     if (!rawPayload || typeof rawPayload !== 'object') {
       throw new BadRequestException('请求体不能为空');
@@ -286,6 +293,7 @@ export class ScheduleJobService {
     };
   }
 
+  // 校验特殊要求中的人员存在性、日期范围和动作冲突。
   private validateSpecialRequirements(payload: NormalizedScheduleJobPayload, members: TeamMemberRow[]) {
     const memberNames = new Set(members.map((member) => member.NAME));
     const grouped = new Map<string, SpecialRequirement[]>();
@@ -304,6 +312,7 @@ export class ScheduleJobService {
     }
   }
 
+  // 校验同一人同一天的特殊要求组合是否自相矛盾。
   private validateSpecialRequirementGroup(requirements: SpecialRequirement[]) {
     const sample = requirements[0];
     const label = `${sample.personName} ${sample.date}`;
@@ -342,6 +351,7 @@ export class ScheduleJobService {
     return Array.from(new Set(requirements.filter((item) => item.action === action).map((item) => item.shift)));
   }
 
+  // 将失败原因转成前端可展示的优化建议。
   private buildOptimizationSuggestions(errorMessage: string | null): OptimizationSuggestion[] {
     const reasons = (errorMessage ?? '').split('；').map((item) => item.trim()).filter(Boolean);
     if (reasons.length === 0) return [];
@@ -445,6 +455,7 @@ export class ScheduleJobService {
     return typeof value === 'string' ? value.trim() : '';
   }
 
+  // 读取可排班人员及技能，作为排班引擎输入。
   private async loadTeamMembers() {
     return this.databaseService.query<TeamMemberRow>(`
       SELECT
@@ -462,6 +473,7 @@ export class ScheduleJobService {
     `);
   }
 
+  // 读取出勤/请假记录，用于排班时避开不可上班人员。
   private async loadAttendance() {
     return this.databaseService.query<AttendanceRow>(`
       SELECT PERSON_NAME, START_DATE, END_DATE, STATUS
@@ -470,6 +482,7 @@ export class ScheduleJobService {
     `);
   }
 
+  // 读取班组轮换记录，保持新排班和历史轮换连续。
   private async loadTeamScheduleRecords() {
     return this.databaseService.query<TeamScheduleRecordRow>(`
       SELECT TEAM, CURRENT_SHIFT, CURRENT_SHIFT_DATE, NEXT_SHIFT, NEXT_SHIFT_DATE
@@ -478,6 +491,7 @@ export class ScheduleJobService {
     `);
   }
 
+  // 读取排班开始前的历史结果，用于判断连续上班和休息间隔。
   private async loadHistoricalResults(startDate: string) {
     return this.databaseService.query<HistoricalScheduleResultRow>(
       `SELECT
@@ -561,6 +575,7 @@ export class ScheduleJobService {
     );
   }
 
+  // 写入排班结果明细，包含借调、校验、异常等字段。
   private async insertScheduleResult(
     connection: { execute: (sql: string, params?: Record<string, unknown>) => Promise<unknown> },
     row: ScheduleResultInsert,
@@ -576,6 +591,7 @@ export class ScheduleJobService {
     );
   }
 
+  // 批量写入任务执行日志。
   private async writeLogs(
     connection: { execute: (sql: string, params?: Record<string, unknown>) => Promise<unknown> },
     jobId: string,
@@ -592,6 +608,7 @@ export class ScheduleJobService {
     }
   }
 
+  // Oracle Date 转 yyyy-MM-dd。
   private formatDate(date: Date) {
     return [
       date.getFullYear(),

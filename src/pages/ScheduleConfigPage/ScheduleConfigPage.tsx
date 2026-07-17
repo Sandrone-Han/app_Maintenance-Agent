@@ -100,10 +100,12 @@ const flowIconStyles: Record<FlowNodeStatus, string> = {
   failed: 'border-red-300 bg-red-100 text-red-700',
 };
 
+// 生成前端临时 id，用于特殊排班要求的表单行 key。
 function createId() {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+// 将 Date 格式化为后端接口和日期输入框都能识别的 yyyy-MM-dd。
 function formatDate(date: Date) {
   return [
     date.getFullYear(),
@@ -112,12 +114,14 @@ function formatDate(date: Date) {
   ].join('-');
 }
 
+// 计算默认开始/结束日期，避免在组件中重复处理 Date 可变对象。
 function addDays(date: Date, days: number) {
   const result = new Date(date);
   result.setDate(result.getDate() + days);
   return result;
 }
 
+// 根据任务状态、当前处理态和错误信息推导流程节点展示状态。
 function getFlowNodeStatus(index: number, isProcessing: boolean, lastJob: ScheduleJobResponse | null, errorMessage: string): FlowNodeStatus {
   if (lastJob?.status === 'COMPLETED') return 'success';
   if (lastJob?.status === 'COMPLETED_WITH_WARNINGS') return index === 8 ? 'warning' : 'success';
@@ -132,6 +136,7 @@ function getFlowNodeStatus(index: number, isProcessing: boolean, lastJob: Schedu
   return 'pending';
 }
 
+// 将流程节点状态转换成对应的图标。
 function getFlowNodeIcon(status: FlowNodeStatus) {
   if (status === 'success') return <CheckCircle2 className="size-4" />;
   if (status === 'warning' || status === 'failed') return <AlertTriangle className="size-4" />;
@@ -139,8 +144,10 @@ function getFlowNodeIcon(status: FlowNodeStatus) {
   return <CalendarClock className="size-4" />;
 }
 
+// 排班配置页：收集排班参数和特殊要求，提交后由后端排班任务生成结果。
 export default function ScheduleConfigPage() {
   const navigate = useNavigate();
+  // 排班参数和流程状态，贯穿“校验 -> 生成 -> 查看结果”完整链路。
   const [weekendMachineCount, setWeekendMachineCount] = useState('0');
   const [startDate, setStartDate] = useState(() => formatDate(addDays(new Date(), 1)));
   const [endDate, setEndDate] = useState(() => formatDate(addDays(new Date(), 7)));
@@ -151,6 +158,7 @@ export default function ScheduleConfigPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastJob, setLastJob] = useState<ScheduleJobResponse | null>(null);
 
+  // 加载人员清单，用于特殊排班要求中的人员选择。
   useEffect(() => {
     apiGet<TeamMember[]>('/team-members')
       .then(setTeamMembers)
@@ -163,6 +171,7 @@ export default function ScheduleConfigPage() {
     return Array.from(new Set(teamMembers.map((member) => member.name))).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
   }, [teamMembers]);
 
+  // 表单基础校验：开机数量、日期范围有效时才允许提交。
   const canSubmit = useMemo(() => {
     const count = Number(weekendMachineCount);
     return (
@@ -174,6 +183,7 @@ export default function ScheduleConfigPage() {
     );
   }, [endDate, startDate, weekendMachineCount]);
 
+  // 单条特殊要求校验，提前拦截人员、日期、班次缺失或越界。
   const getSpecialRequirementError = (item: SpecialRequirement, index: number) => {
     const label = `特殊要求第 ${index + 1} 行`;
     const option = actionOptions.find((action) => action.value === item.action);
@@ -189,12 +199,14 @@ export default function ScheduleConfigPage() {
     return '';
   };
 
+  // 汇总所有特殊要求错误，供提交前阻断和页面行内提示。
   const specialRequirementErrors = useMemo(() => {
     return specialRequirements
       .map((item, index) => ({ id: item.id, message: getSpecialRequirementError(item, index) }))
       .filter((item) => item.message);
   }, [endDate, specialRequirements, startDate]);
 
+  // 新增一条特殊要求，默认选中第一个人员和早班。
   const addSpecialRequirement = () => {
     if (personNames.length === 0) {
       toast.warning('人员数据还在加载，暂时不能添加特殊要求');
@@ -212,10 +224,12 @@ export default function ScheduleConfigPage() {
     ]);
   };
 
+  // 删除一条特殊要求表单行。
   const removeSpecialRequirement = (id: string) => {
     setSpecialRequirements((prev) => prev.filter((item) => item.id !== id));
   };
 
+  // 更新特殊要求字段，并根据动作类型自动处理是否需要班次。
   const updateSpecialRequirement = (
     id: string,
     field: keyof SpecialRequirement,
@@ -236,6 +250,7 @@ export default function ScheduleConfigPage() {
     );
   };
 
+  // 启动排班任务：提交参数到后端，记录日志、任务状态和异常摘要。
   const startSchedule = async () => {
     if (!canSubmit || isProcessing) return;
     if (specialRequirementErrors.length > 0) {
@@ -252,6 +267,7 @@ export default function ScheduleConfigPage() {
     setLastJob(null);
 
     try {
+      // 后端生成原始排班结果；失败时仍可能返回预览和优化建议，供管理员人工修正。
       const response = await apiPost<ScheduleJobResponse>('/schedule-jobs', {
         weekendMachineCount: Number(weekendMachineCount),
         startDate,
@@ -288,6 +304,7 @@ export default function ScheduleConfigPage() {
 
   return (
     <div className="space-y-6">
+      {/* 参数配置区：开机数量、日期范围和特殊人员排班要求。 */}
       <Card className="rounded-[8px] border-border shadow-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-xl font-semibold">
@@ -472,6 +489,7 @@ export default function ScheduleConfigPage() {
         </CardContent>
       </Card>
 
+      {/* 流程展示区：展示后端排班任务进度、异常建议和日志。 */}
       <Card className="rounded-[8px] border-border shadow-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-xl font-semibold">

@@ -1,4 +1,6 @@
 // EXPORTS: ITeamMember, MOCK_TEAM_MEMBERS
+
+// 班组人员结构，排班时会根据班组、角色和技能进行匹配。
 export interface ITeamMember {
   id: string;
   name: string;
@@ -9,6 +11,7 @@ export interface ITeamMember {
   imageUrl: string;
 }
 
+// 维护人员示例数据，覆盖 A1/A2/A3 轮班组和 B 长白班组。
 export const MOCK_TEAM_MEMBERS: ITeamMember[] = [
   {
     id: '1',

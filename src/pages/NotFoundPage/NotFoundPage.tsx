@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 
+// 兜底 404 页面：当用户访问未配置路由时提供返回入口。
 export default function NotFoundPage() {
   return (
     <div className="flex flex-col items-center justify-center py-24">

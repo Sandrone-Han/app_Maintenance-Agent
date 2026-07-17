@@ -55,12 +55,15 @@ const statusClass: Record<string, string> = {
   事假: 'bg-red-100 text-red-900',
 };
 
+// 人员信息页：维护出勤/请假记录，并关联人员所属班组用于排班校验。
 export default function PersonnelPage() {
+  // 页面核心状态：出勤记录、人员下拉选项、表单内容和加载态。
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [form, setForm] = useState<AttendanceForm>(emptyForm);
   const [isLoading, setIsLoading] = useState(false);
 
+  // 同时加载出勤记录和人员清单，保证新增记录时能自动带出班组。
   const loadData = async () => {
     setIsLoading(true);
     try {
@@ -81,6 +84,7 @@ export default function PersonnelPage() {
     void loadData();
   }, []);
 
+  // 按人员姓名建立班组索引，选择人员后自动补全班组字段。
   const teamByPerson = useMemo(() => {
     return new Map(members.map((member) => [member.name, member.team]));
   }, [members]);
@@ -89,6 +93,7 @@ export default function PersonnelPage() {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  // 根据表单是否带 id 区分新增和编辑，保存后刷新表格。
   const submit = async () => {
     if (!form.personName || !form.team || !form.startDate || !form.endDate || !form.status) {
       toast.error('请完整填写出勤记录');
@@ -111,6 +116,7 @@ export default function PersonnelPage() {
     }
   };
 
+  // 将表格行数据回填到表单，进入编辑状态。
   const editRecord = (record: AttendanceRecord) => {
     setForm({
       id: record.id,
@@ -122,6 +128,7 @@ export default function PersonnelPage() {
     });
   };
 
+  // 删除单条出勤记录，并在成功后重新拉取列表。
   const removeRecord = async (id: string) => {
     try {
       await apiDelete(`/attendance-records/${id}`);
@@ -134,6 +141,7 @@ export default function PersonnelPage() {
 
   return (
     <div className="space-y-6">
+      {/* 顶部表单区：新增或编辑出勤记录。 */}
       <Card className="rounded-[8px] border-border shadow-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-xl font-semibold">
@@ -211,6 +219,7 @@ export default function PersonnelPage() {
         </CardContent>
       </Card>
 
+      {/* 下方表格区：展示全部出勤记录和行内操作。 */}
       <Card className="rounded-[8px] border-border shadow-sm">
         <CardContent className="p-0">
           <div className="overflow-x-auto">

@@ -43,9 +43,11 @@ type DbConnectionLike = {
 };
 
 @Injectable()
+// 班组人员服务：维护人员资料、技能明细，并支持 Excel 导入。
 export class TeamMemberService {
   constructor(private readonly databaseService: DatabaseService) {}
 
+  // 查询人员并用 LISTAGG 汇总技能，返回前端表格结构。
   async findAll() {
     const rows = await this.databaseService.query<TeamMemberRow>(`
       SELECT
@@ -73,6 +75,7 @@ export class TeamMemberService {
     }));
   }
 
+  // 创建人员和技能明细，使用事务保证两张表一致。
   async create(rawPayload: unknown) {
     const payload = this.parsePayload(rawPayload);
     const id = randomUUID();
@@ -97,6 +100,7 @@ export class TeamMemberService {
     return { id };
   }
 
+  // 解析 Excel，每行按姓名匹配已有人员：存在则更新，不存在则新增。
   async importExcel(file: UploadedExcelFile | undefined) {
     if (!file) {
       throw new BadRequestException('请上传 Excel 文件');
@@ -163,6 +167,7 @@ export class TeamMemberService {
     };
   }
 
+  // 更新人员主表并重建技能明细。
   async update(id: string, rawPayload: unknown) {
     const payload = this.parsePayload(rawPayload);
 
@@ -197,6 +202,7 @@ export class TeamMemberService {
     return { id };
   }
 
+  // 删除人员，数据库外键/级联规则负责关联数据处理。
   async remove(id: string) {
     await this.ensureExists(id);
     await this.databaseService.execute(
@@ -207,6 +213,7 @@ export class TeamMemberService {
     return { id };
   }
 
+  // 校验人员是否存在，供更新和删除复用。
   private async ensureExists(id: string) {
     const rows = await this.databaseService.query<{ CNT: number }>(
       'SELECT COUNT(*) AS CNT FROM TEAM_MEMBER WHERE ID = :id',
@@ -218,6 +225,7 @@ export class TeamMemberService {
     }
   }
 
+  // 按姓名查找人员 id，用于 Excel 导入时判断新增还是更新。
   private async findIdByName(name: string) {
     const rows = await this.databaseService.query<{ ID: string }>(
       'SELECT ID FROM TEAM_MEMBER WHERE NAME = :name FETCH FIRST 1 ROWS ONLY',
@@ -227,6 +235,7 @@ export class TeamMemberService {
     return rows[0]?.ID ?? null;
   }
 
+  // 校验人员表单请求体，确保基础资料完整。
   private parsePayload(rawPayload: unknown): TeamMemberPayload {
     if (!rawPayload || typeof rawPayload !== 'object') {
       throw new BadRequestException('请求体不能为空');
@@ -248,6 +257,7 @@ export class TeamMemberService {
     return payload;
   }
 
+  // 读取 Excel 第一张工作表，并映射为内部导入行结构。
   private parseExcel(buffer: Buffer): ImportRow[] {
     const workbook = xlsx.read(buffer, { type: 'buffer' });
     const firstSheetName = workbook.SheetNames[0];
@@ -281,18 +291,21 @@ export class TeamMemberService {
       .filter((row) => row.name);
   }
 
+  // 兼容不同表格中的班次类型写法。
   private normalizeShiftType(value: unknown) {
     const text = String(value ?? '').trim();
     if (text === '早班/晚班') return '早晚班';
     return text;
   }
 
+  // 兼容“班长”等角色写法，统一落库为组长/组员。
   private normalizeRole(value: unknown) {
     const text = String(value ?? '').trim();
     if (text.includes('班长')) return '组长';
     return text || '组员';
   }
 
+  // 将 Excel 技能单元格拆分为技能数组。
   private parseSkills(value: unknown) {
     return String(value ?? '')
       .split(/[，,、/]/)
@@ -300,6 +313,7 @@ export class TeamMemberService {
       .filter(Boolean);
   }
 
+  // 重建某个人员的技能明细，调用方负责事务边界。
   private async replaceSkills(
     connection: DbConnectionLike,
     memberId: string,

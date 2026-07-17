@@ -1,4 +1,6 @@
 // EXPORTS: IAttendance, MOCK_ATTENDANCE
+
+// 人员出勤/请假记录结构，供人员信息页和排班校验读取。
 export interface IAttendance {
   id: string
   personName: string
@@ -9,6 +11,7 @@ export interface IAttendance {
   updatedAt: string
 }
 
+// 首次初始化时使用的出勤示例数据，之后由后端或本地持久化数据覆盖。
 export const MOCK_ATTENDANCE: IAttendance[] = [
   {
     id: '1',

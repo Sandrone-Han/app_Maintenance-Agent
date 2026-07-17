@@ -9,11 +9,13 @@ type DbCheckRow = {
 type BindParams = unknown[] | Record<string, unknown>;
 
 @Injectable()
+// 数据库服务：封装 Oracle 连接池、查询、执行和事务提交/回滚。
 export class DatabaseService implements OnModuleDestroy {
   private pool: oracledb.Pool | null = null;
 
   constructor(private readonly configService: ConfigService) {}
 
+  // 健康检查使用的轻量查询，验证数据库连接是否可用。
   async checkConnection() {
     const pool = await this.getPool();
     const connection = await pool.getConnection();
@@ -36,6 +38,7 @@ export class DatabaseService implements OnModuleDestroy {
     }
   }
 
+  // 只读查询封装，默认返回对象格式行数据。
   async query<T>(
     sql: string,
     bindParams: BindParams = [],
@@ -56,6 +59,7 @@ export class DatabaseService implements OnModuleDestroy {
     }
   }
 
+  // 单条写入/更新/删除封装，自动提交，失败时回滚。
   async execute(
     sql: string,
     bindParams: BindParams = [],
@@ -74,6 +78,7 @@ export class DatabaseService implements OnModuleDestroy {
     }
   }
 
+  // 多步数据库操作事务封装，调用方在同一连接中完成读写。
   async transaction<T>(
     callback: (connection: oracledb.Connection) => Promise<T>,
   ): Promise<T> {
@@ -92,6 +97,7 @@ export class DatabaseService implements OnModuleDestroy {
     }
   }
 
+  // 应用关闭时释放 Oracle 连接池。
   async onModuleDestroy() {
     if (this.pool) {
       await this.pool.close(10);
@@ -99,6 +105,7 @@ export class DatabaseService implements OnModuleDestroy {
     }
   }
 
+  // 懒加载连接池，首次数据库访问时按环境变量创建。
   private async getPool() {
     if (!this.pool) {
       this.pool = await oracledb.createPool({
@@ -114,6 +121,7 @@ export class DatabaseService implements OnModuleDestroy {
     return this.pool;
   }
 
+  // 拼接 Oracle connectString，形如 host:port/service。
   private buildConnectString() {
     const host = this.configService.getOrThrow<string>('DB_HOST');
     const port = this.configService.get<string>('DB_PORT', '1521');

@@ -27,46 +27,61 @@ Oracle 数据库
 
 ```txt
 .
-├── src
-│   ├── app.tsx                     # 前端路由
-│   ├── index.tsx                   # 前端入口
-│   ├── components                  # 布局和通用组件
-│   ├── config
-│   │   └── navigation.ts           # 顶部导航和侧边栏导航配置
-│   ├── data                        # 前端类型和空 mock 数据
-│   ├── lib
-│   │   └── api.ts                  # API 请求封装
-│   └── pages                       # 业务页面
-│       ├── ScheduleConfigPage      # 排班配置
-│       ├── ScheduleResultPage      # 排班结果、泳道图、调整弹窗
-│       ├── TeamManagePage          # 班组和班次管理
-│       ├── PersonnelPage           # 休假信息
-│       ├── TeamScheduleRecordPage  # 排班记录
-│       ├── DataStatisticsPage      # 数据统计
-│       └── EmployeeAgentPage       # 员工查询
-├── backend
-│   ├── docker-compose.yml          # 本地 Oracle
-│   ├── scripts                     # 数据库迁移、初始化、校验、导入脚本
-│   ├── imports                     # Excel 导入示例文件
-│   └── src
-│       ├── main.ts                 # 后端入口
-│       ├── app.module.ts           # NestJS 模块入口
-│       └── modules
-│           ├── schedule-job        # 排班任务和排班引擎
-│           ├── schedule-result     # 排班结果查询、编辑、导出
-│           ├── schedule-adjustment # 请假替班
-│           ├── schedule-swap       # 换班
-│           ├── team-member         # 班组人员
-│           ├── shift-type          # 班次配置
-│           ├── attendance          # 休假/出勤记录
-│           ├── team-schedule-record# 班组轮换记录
-│           ├── employee-agent      # 员工查询
-│           └── database            # Oracle 连接池
-├── public                          # 静态资源
-├── shared                          # 平台共享资源
-├── scripts                         # 前端开发/构建脚本
-├── package.json                    # 前端脚本和依赖
-└── README.md
+├─ src/                         # 前端源码目录
+│  ├─ index.tsx                 # 前端应用入口，挂载 React、路由、错误边界
+│  ├─ app.tsx                   # 路由配置，决定每个 URL 对应哪个页面
+│  ├─ index.css                 # 全局样式入口
+│  ├─ components/               # 公共组件目录
+│  │  ├─ Layout.tsx             # 整体页面布局，包含侧边栏和内容区
+│  │  ├─ AppSidebar.tsx         # 左侧导航菜单
+│  │  ├─ Header.tsx             # 页面顶部区域
+│  │  └─ ui/                    # 通用基础 UI 组件，如按钮、表格、弹窗
+│  ├─ config/
+│  │  └─ navigation.ts          # 导航菜单配置，定义菜单文字、路径和图标
+│  ├─ data/                     # 前端示例数据或类型数据
+│  ├─ hooks/                    # 自定义 React Hooks
+│  ├─ lib/
+│  │  ├─ api.ts                 # 封装 GET、POST、PUT、DELETE 等 API 请求
+│  │  └─ utils.ts               # 通用工具函数
+│  └─ pages/                    # 业务页面目录
+│     ├─ ScheduleConfigPage/    # 排班配置页面
+│     ├─ ScheduleResultPage/    # 排班结果页面
+│     ├─ TeamManagePage/        # 班组和班次管理页面
+│     ├─ PersonnelPage/         # 人员出勤/休假信息页面
+│     ├─ TeamScheduleRecordPage/# 班组排班记录页面
+│     ├─ DataStatisticsPage/    # 数据统计页面
+│     ├─ EmployeeAgentPage/     # 员工查询页面
+│     └─ NotFoundPage/          # 404 页面
+│
+├─ backend/                     # 后端 NestJS 服务目录
+│  ├─ src/
+│  │  ├─ main.ts                # 后端服务启动入口
+│  │  ├─ app.module.ts          # 后端模块总入口，注册所有业务模块
+│  │  └─ modules/               # 后端业务模块目录
+│  │     ├─ health/             # 健康检查接口
+│  │     ├─ database/           # 数据库连接与查询封装
+│  │     ├─ team-member/        # 班组人员增删改查
+│  │     ├─ shift-type/         # 班次类型增删改查
+│  │     ├─ attendance/         # 出勤/请假记录管理
+│  │     ├─ team-schedule-record/# 班组轮换状态记录
+│  │     ├─ schedule-job/       # 排班任务创建、执行和排班引擎
+│  │     ├─ schedule-result/    # 排班结果查询、编辑、导出
+│  │     ├─ schedule-adjustment/# 请假替班相关逻辑
+│  │     ├─ schedule-swap/      # 换班相关逻辑
+│  │     └─ employee-agent/     # 员工信息查询接口
+│  ├─ scripts/                  # 数据库迁移、初始化、校验、导入脚本
+│  ├─ imports/                  # Excel 导入示例文件
+│  ├─ docker-compose.yml        # 本地 Oracle 数据库容器配置
+│  └─ package.json              # 后端依赖和启动命令
+│
+├─ shared/                      # 前后端或平台共享资源
+│  ├─ plugin-types.ts           # 插件相关类型定义
+│  └─ capabilities/             # AI 插件能力配置文件
+│
+├─ public/                      # 静态资源目录
+├─ scripts/                     # 前端开发和构建脚本
+├─ package.json                 # 前端依赖、脚本和插件配置
+└─ README.md                    # 项目说明文档
 ```
 
 ## 本地启动

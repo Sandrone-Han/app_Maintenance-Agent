@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/sidebar';
 import { NAV_ITEMS } from '@/config/navigation';
 
+// 左侧主导航：根据当前路径高亮对应菜单，并支持折叠成图标栏。
 export default function AppSidebar() {
   const { pathname } = useLocation();
 
@@ -29,8 +30,10 @@ export default function AppSidebar() {
       <SidebarContent>
         <SidebarGroup className="p-2">
           <SidebarMenu>
+            {/* 导航项集中来自配置文件，方便新增页面时只维护一处。 */}
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
+              // 子路径也视为当前模块激活，避免详情页进入后菜单失去高亮。
               const isActive = pathname === item.path || pathname.startsWith(`${item.path}/`);
               return (
                 <SidebarMenuItem key={item.path}>

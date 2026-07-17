@@ -8,6 +8,7 @@ import {
   Users,
 } from 'lucide-react';
 
+// 全局导航配置：左侧菜单和顶部导航都从这里读取路径、文案和图标。
 export const NAV_ITEMS = [
   { path: '/schedule-config', label: '排班配置', icon: CalendarClock },
   { path: '/schedule-result', label: '排班结果', icon: ClipboardList },

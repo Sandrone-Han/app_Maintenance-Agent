@@ -3,6 +3,7 @@ import { SidebarTrigger } from '@/components/ui/sidebar';
 import { cn } from '@/lib/utils';
 import { NAV_ITEMS } from '@/config/navigation';
 
+// 顶部栏：移动端提供侧边栏触发器，桌面端展示横向导航快捷入口。
 export default function Header() {
   const { pathname } = useLocation();
 
@@ -24,6 +25,7 @@ export default function Header() {
         </NavLink>
 
         <nav className="hidden md:flex items-center gap-1 ml-4">
+          {/* 与侧边栏共用导航配置，保证两个导航入口保持同步。 */}
           {NAV_ITEMS.map((item) => {
             const isActive = pathname === item.path || pathname.startsWith(`${item.path}/`);
             return (

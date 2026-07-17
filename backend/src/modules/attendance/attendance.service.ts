@@ -21,9 +21,11 @@ type AttendancePayload = {
 };
 
 @Injectable()
+// 出勤记录服务：负责校验请求体、关联人员 ID，并持久化到 Oracle。
 export class AttendanceService {
   constructor(private readonly databaseService: DatabaseService) {}
 
+  // 查询出勤记录并转换为前端需要的 camelCase 字段。
   async findAll() {
     const rows = await this.databaseService.query<AttendanceRow>(`
       SELECT ID, PERSON_NAME, TEAM, START_DATE, END_DATE, STATUS, UPDATED_AT
@@ -42,6 +44,7 @@ export class AttendanceService {
     }));
   }
 
+  // 创建出勤记录，若能匹配人员则同时写入 MEMBER_ID。
   async create(rawPayload: unknown) {
     const payload = this.parsePayload(rawPayload);
     const id = randomUUID();
@@ -56,6 +59,7 @@ export class AttendanceService {
     return { id };
   }
 
+  // 更新出勤记录前先校验记录存在，避免静默更新 0 行。
   async update(id: string, rawPayload: unknown) {
     const payload = this.parsePayload(rawPayload);
     const memberId = await this.findMemberId(payload.personName);
@@ -77,12 +81,14 @@ export class AttendanceService {
     return { id };
   }
 
+  // 删除出勤记录前先确认记录存在。
   async remove(id: string) {
     await this.ensureExists(id);
     await this.databaseService.execute('DELETE FROM ATTENDANCE_RECORD WHERE ID = :id', { id });
     return { id };
   }
 
+  // 解析并校验新增/编辑请求体的必填字段。
   private parsePayload(rawPayload: unknown): Required<AttendancePayload> {
     if (!rawPayload || typeof rawPayload !== 'object') {
       throw new BadRequestException('请求体不能为空');
@@ -106,6 +112,7 @@ export class AttendanceService {
     return payload as Required<AttendancePayload>;
   }
 
+  // 按人员姓名查找人员主键，找不到时允许为空以保留原始姓名。
   private async findMemberId(personName: string) {
     const rows = await this.databaseService.query<{ ID: string }>(
       'SELECT ID FROM TEAM_MEMBER WHERE NAME = :personName FETCH FIRST 1 ROWS ONLY',
@@ -115,6 +122,7 @@ export class AttendanceService {
     return rows[0]?.ID ?? null;
   }
 
+  // 通用存在性校验，供更新和删除复用。
   private async ensureExists(id: string) {
     const rows = await this.databaseService.query<{ CNT: number }>(
       'SELECT COUNT(*) AS CNT FROM ATTENDANCE_RECORD WHERE ID = :id',
@@ -126,6 +134,7 @@ export class AttendanceService {
     }
   }
 
+  // Oracle Date 转为前端日期输入框使用的 yyyy-MM-dd。
   private formatDate(date: Date) {
     return [
       date.getFullYear(),

@@ -76,16 +76,19 @@ const VALIDATION_MARK_STYLES: Record<string, string> = {
   已确认: 'border-amber-400 ring-1 ring-amber-300',
 };
 
+// 泳道图表头只展示月日，减少横向空间占用。
 function formatChartDate(date: string) {
   const [, month, day] = date.split('-');
   return month && day ? `${month}-${day}` : date;
 }
 
+// 根据当前模式决定一行泳道代表班组还是人员。
 function getLaneName(result: IScheduleResult, mode: SwimlaneMode) {
   if (mode === 'team') return result.actualTeam || result.team || '未分组';
   return result.personName || '未命名';
 }
 
+// 拼接单元格 tooltip，方便查看借调、异常、调整和换班详情。
 function getCellTitle(item: SwimlaneCell) {
   return [
     `${item.personName} ${item.shift}`,
@@ -103,6 +106,7 @@ function getCellTitle(item: SwimlaneCell) {
   ].filter(Boolean).join('\n');
 }
 
+// 排班泳道图：按班组或人员维度，把多日排班结果展开成矩阵视图。
 export function ScheduleSwimlaneChart({
   results,
   onAdjustResult,
@@ -110,9 +114,11 @@ export function ScheduleSwimlaneChart({
   onCancelSwap,
   canAdjustResult,
 }: ScheduleSwimlaneChartProps) {
+  // 模式状态：班组图用于调整操作，人员图用于查看个人连续排班。
   const [mode, setMode] = useState<SwimlaneMode>('team');
   const activeMode = MODE_CONFIG[mode];
 
+  // 派生泳道图结构：日期列、泳道行和每个单元格中的排班卡片。
   const { dateList, laneList, cellMap } = useMemo(() => {
     const dates = Array.from(new Map(
       results.map((item) => [item.date, item.weekdayName]),
@@ -124,6 +130,7 @@ export function ScheduleSwimlaneChart({
 
     const cells = new Map<string, SwimlaneCell[]>();
     for (const item of results) {
+      // 日期列和泳道仍来自完整结果；休息只隐藏卡片，后端数据和候选逻辑不变。
       if (item.shift === '休息') continue;
       const lane = getLaneName(item, mode);
       const key = `${lane}__${item.date}`;
@@ -165,6 +172,7 @@ export function ScheduleSwimlaneChart({
 
   return (
     <Card className="rounded-[8px] border-border shadow-sm">
+      {/* 图表标题和维度切换按钮。 */}
       <CardHeader className="pb-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -200,6 +208,7 @@ export function ScheduleSwimlaneChart({
         </div>
       </CardHeader>
       <CardContent>
+        {/* 矩阵主体：第一列固定泳道名称，其余列按日期展示排班卡片。 */}
         {results.length === 0 ? (
           <div className="rounded-[8px] border border-dashed border-border py-12 text-center text-sm text-muted-foreground">
             当前筛选条件下暂无排班结果

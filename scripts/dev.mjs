@@ -15,7 +15,7 @@ const ROOT = path.resolve(__dirname, '..');
 process.chdir(ROOT);
 
 const LOG_DIR = process.env.LOG_DIR || 'logs';
-const CLIENT_DEV_PORT = process.env.CLIENT_DEV_PORT || '5173';
+const CLIENT_DEV_PORT = process.env.CLIENT_DEV_PORT || '8001';
 const CLIENT_DEV_HOST = process.env.CLIENT_DEV_HOST || '127.0.0.1';
 const VITE_BIN = path.join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
 const isWindows = process.platform === 'win32';

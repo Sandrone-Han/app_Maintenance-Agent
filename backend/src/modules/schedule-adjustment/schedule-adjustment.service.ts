@@ -80,9 +80,11 @@ type Candidate = TeamMemberRow & {
 const LEAVE_TYPES = ['请假', '事假', '临时调休', '其他'];
 
 @Injectable()
+// 请假替班服务：为本周排班提供临时替班推荐、创建和撤销能力。
 export class ScheduleAdjustmentService {
   constructor(private readonly databaseService: DatabaseService) {}
 
+  // 查询请假替班记录，支持按排班结果筛选。
   async findAll(query: Record<string, string | undefined>) {
     const filters: string[] = [];
     const params: Record<string, string> = {};
@@ -109,6 +111,7 @@ export class ScheduleAdjustmentService {
     return rows.map((row) => this.toDto(row));
   }
 
+  // 获取某条排班结果的可替班人员推荐。
   async getRecommendations(resultId: string) {
     if (!resultId) throw new BadRequestException('resultId 不能为空');
     const result = await this.loadResult(resultId);
@@ -123,6 +126,7 @@ export class ScheduleAdjustmentService {
       throw new BadRequestException('该排班结果已有生效换班');
     }
 
+    // 推荐只返回可执行候选：优先低风险；没有低风险时才返回最低风险兜底候选。
     const candidates = await this.buildRecommendations(result);
     return {
       resultId,
@@ -133,6 +137,7 @@ export class ScheduleAdjustmentService {
     };
   }
 
+  // 创建请假替班调整，并同步更新排班结果的实际人员。
   async create(rawPayload: unknown) {
     const payload = this.parseCreatePayload(rawPayload);
     const result = await this.loadResult(payload.resultId);
@@ -142,6 +147,7 @@ export class ScheduleAdjustmentService {
     const replacement = await this.loadMemberByName(payload.replacementPersonName);
     if (!replacement) throw new BadRequestException('替班人员不存在或未启用');
 
+    // 创建时复用推荐结果校验，防止前端绕过候选列表提交不可执行替班人。
     const recommendations = await this.buildRecommendations(result);
     const selected = recommendations.find((item) => item.personName === replacement.NAME);
     if (!selected) {
@@ -149,6 +155,7 @@ export class ScheduleAdjustmentService {
     }
 
     const id = randomUUID();
+    // 在事务中锁定原排班结果，避免同时被换班或重复替班。
     await this.databaseService.transaction(async (connection) => {
       await this.lockScheduleResult(connection, result.ID);
       await this.ensureResultIsLatestForUpdate(connection, result.ID);
@@ -185,6 +192,7 @@ export class ScheduleAdjustmentService {
     return { id, resultId: result.ID, status: '生效' };
   }
 
+  // 撤销请假替班，恢复原排班人员。
   async cancel(id: string) {
     const rows = await this.databaseService.query<{ ID: string; STATUS: string }>(
       'SELECT ID, STATUS FROM SCHEDULE_RESULT_ADJUSTMENT WHERE ID = :id',
@@ -206,6 +214,7 @@ export class ScheduleAdjustmentService {
     return { id, status: '已撤销' };
   }
 
+  // 根据同班组、休息班组、技能和风险评分生成替班候选。
   private async buildRecommendations(result: ScheduleResultRow) {
     const workDate = this.formatDate(result.WORK_DATE);
     const members = (await this.loadAvailableMembers()).map((member) => ({
@@ -230,6 +239,7 @@ export class ScheduleAdjustmentService {
     const originalTeam = result.ACTUAL_TEAM ?? result.TEAM;
     const originalSkills = this.parseSkills(result.SKILLS_TEXT);
 
+    // 硬冲突先过滤掉；剩余候选再按角色/技能计算风险分。
     const recommendations: AdjustmentRecommendation[] = members
       .filter((member) => member.NAME !== result.PERSON_NAME)
       .filter((member) => !assignedPeople.has(member.NAME))
@@ -278,6 +288,7 @@ export class ScheduleAdjustmentService {
         return a.personName.localeCompare(b.personName, 'zh-Hans-CN');
       });
 
+    // 有低风险时不混入有风险候选；没有低风险时只返回影响最小的一档。
     const lowRisk = recommendations.filter((item) => item.riskScore === 0);
     if (lowRisk.length > 0) return lowRisk;
 
@@ -287,6 +298,7 @@ export class ScheduleAdjustmentService {
       : recommendations.filter((item) => item.riskScore === minRiskScore);
   }
 
+  // 解析创建替班请求体。
   private parseCreatePayload(rawPayload: unknown) {
     if (!rawPayload || typeof rawPayload !== 'object') {
       throw new BadRequestException('请求体不能为空');
@@ -304,6 +316,7 @@ export class ScheduleAdjustmentService {
     return { resultId, leaveType, reason, replacementPersonName };
   }
 
+  // 加载排班结果详情。
   private async loadResult(id: string) {
     const rows = await this.databaseService.query<ScheduleResultRow>(
       `SELECT ID, JOB_ID, WORK_DATE, SHIFT_NAME, TEAM, MEMBER_ID, PERSON_NAME, ROLE_NAME, SKILLS_TEXT, ACTUAL_TEAM
@@ -315,6 +328,7 @@ export class ScheduleAdjustmentService {
     return rows[0];
   }
 
+  // 查询当前排班结果是否已有生效替班。
   private async loadActiveAdjustment(resultId: string) {
     const rows = await this.databaseService.query<{ ID: string }>(
       `SELECT ID
@@ -326,6 +340,7 @@ export class ScheduleAdjustmentService {
     return rows[0] ?? null;
   }
 
+  // 替班和换班互斥，创建前需要检查是否已有换班。
   private async hasActiveSwap(resultId: string) {
     const rows = await this.databaseService.query<{ CNT: number }>(
       `SELECT COUNT(*) AS CNT
@@ -337,6 +352,7 @@ export class ScheduleAdjustmentService {
     return Number(rows[0]?.CNT ?? 0) > 0;
   }
 
+  // 锁定目标排班结果行，防止并发调整。
   private async lockScheduleResult(connection: oracledb.Connection, resultId: string) {
     await connection.execute(
       'SELECT ID FROM SCHEDULE_RESULT WHERE ID = :resultId FOR UPDATE',
@@ -345,13 +361,16 @@ export class ScheduleAdjustmentService {
     );
   }
 
+  // 请假替班只允许作用于实际工作班次。
   private ensureWorkShift(shiftName: string) {
     if (shiftName === '休息') {
       throw new BadRequestException('休息记录只能作为替班候选，不能作为请假替班源班次');
     }
   }
 
+  // 只允许调整该人员当天最新排班任务的结果。
   private async ensureResultIsLatest(resultId: string) {
+    // 临时调整只允许作用于当前最新版本，避免旧任务结果被继续修改。
     const rows = await this.databaseService.query<{ CNT: number }>(
       this.latestResultSql(),
       { resultId },
@@ -368,7 +387,9 @@ export class ScheduleAdjustmentService {
     }
   }
 
+  // 事务内再次确认该结果没有被其他调整占用。
   private async ensureResultAvailableForAdjustment(connection: oracledb.Connection, resultId: string) {
+    // 请假替班和换班互斥，同一条排班结果同一时间只能有一种生效覆盖。
     const activeAdjustmentCount = await this.countWithConnection(
       connection,
       `SELECT COUNT(*) AS CNT
@@ -406,6 +427,7 @@ export class ScheduleAdjustmentService {
     return Number(result.rows?.[0]?.CNT ?? 0);
   }
 
+  // 最新结果判定 SQL，避免旧任务结果被继续调整。
   private latestResultSql() {
     return `
       WITH target_result AS (
@@ -438,6 +460,7 @@ export class ScheduleAdjustmentService {
       WHERE sr.ID = :resultId`;
   }
 
+  // 按姓名加载替班人员资料和技能。
   private async loadMemberByName(personName: string) {
     const rows = await this.databaseService.query<TeamMemberRow>(
       `SELECT tm.ID, tm.NAME, tm.TEAM, tm.ROLE, tm.STATUS,
@@ -453,6 +476,7 @@ export class ScheduleAdjustmentService {
     return rows[0] ?? null;
   }
 
+  // 加载全部启用人员作为候选池。
   private async loadAvailableMembers() {
     return this.databaseService.query<TeamMemberRow>(`
       SELECT tm.ID, tm.NAME, tm.TEAM, tm.ROLE, tm.STATUS,
@@ -465,6 +489,7 @@ export class ScheduleAdjustmentService {
     `);
   }
 
+  // 加载某任务某天的有效排班行，用于判断同日占用。
   private async loadEffectiveDayRows(jobId: string, workDate: string) {
     return this.databaseService.query<EffectiveDayRow>(
       `SELECT
@@ -482,6 +507,7 @@ export class ScheduleAdjustmentService {
     );
   }
 
+  // 查询当天已作为请假替班的人员，避免重复使用。
   private async loadTempLeavePeople(workDate: string) {
     const rows = await this.databaseService.query<{ ORIGINAL_PERSON_NAME: string }>(
       `SELECT ORIGINAL_PERSON_NAME
@@ -493,6 +519,7 @@ export class ScheduleAdjustmentService {
     return new Set(rows.map((row) => row.ORIGINAL_PERSON_NAME));
   }
 
+  // 查询当天已参与换班的人员，避免和替班冲突。
   private async loadSwapPeople(workDate: string) {
     const rows = await this.databaseService.query<{ PERSON_NAME: string }>(
       `SELECT PERSON_NAME
@@ -512,6 +539,7 @@ export class ScheduleAdjustmentService {
     return new Set(rows.map((row) => row.PERSON_NAME));
   }
 
+  // 查询当天请假/休假人员，避免推荐不可上班人员。
   private async loadAbsentPeople(workDate: string) {
     const rows = await this.databaseService.query<{ PERSON_NAME: string }>(
       `SELECT PERSON_NAME
@@ -524,6 +552,7 @@ export class ScheduleAdjustmentService {
     return new Set(rows.map((row) => row.PERSON_NAME));
   }
 
+  // 根据当天有效排班推断休息班组。
   private inferRestTeam(rows: EffectiveDayRow[]) {
     const workingTeams = new Set(
       rows
@@ -547,6 +576,7 @@ export class ScheduleAdjustmentService {
     return typeof value === 'string' ? value.trim() : '';
   }
 
+  // 数据库行转前端替班记录结构。
   private toDto(row: AdjustmentRow) {
     return {
       id: row.ID,

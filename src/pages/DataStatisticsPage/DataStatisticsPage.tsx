@@ -65,6 +65,7 @@ type ShiftStat = {
   percentage: number;
 };
 
+// 将日期格式化为接口查询参数使用的 yyyy-MM-dd。
 function formatDate(date: Date) {
   return [
     date.getFullYear(),
@@ -73,16 +74,19 @@ function formatDate(date: Date) {
   ].join('-');
 }
 
+// 将日期字符串解析为本地日期，避免浏览器按 UTC 解析产生偏移。
 function parseDate(dateText: string) {
   return new Date(`${dateText}T00:00:00`);
 }
 
+// 日期偏移工具，用于周切换和默认区间。
 function addDays(date: Date, days: number) {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
   return next;
 }
 
+// 以周一为每周起点，计算所选日期所在周。
 function startOfWeek(date: Date) {
   const result = new Date(date);
   result.setHours(0, 0, 0, 0);
@@ -92,6 +96,7 @@ function startOfWeek(date: Date) {
   return result;
 }
 
+// 根据任意周内日期生成周一到周日的统计范围。
 function getWeekRange(dateText: string): DateRange {
   const monday = startOfWeek(parseDate(dateText));
   return {
@@ -100,16 +105,19 @@ function getWeekRange(dateText: string): DateRange {
   };
 }
 
+// 按班次估算工时，统计时不把休息记录计入工时。
 function getShiftHours(shift: string) {
   if (shift === '早班' || shift === '晚班') return 12;
   if (shift === '长白班') return 8.5;
   return 0;
 }
 
+// 判断一条排班结果是否存在异常或异常说明。
 function isException(result: IScheduleResult) {
   return result.validationResult === '不通过' || Boolean(result.exceptionReason);
 }
 
+// 对调整/换班等记录做去重统计，缺少 id 时使用兜底条件计数。
 function uniqueCount(results: IScheduleResult[], key: keyof IScheduleResult, fallbackPredicate: (result: IScheduleResult) => boolean) {
   const values = new Set<string>();
   let fallbackCount = 0;
@@ -124,7 +132,9 @@ function uniqueCount(results: IScheduleResult[], key: keyof IScheduleResult, fal
   return values.size > 0 ? values.size : fallbackCount;
 }
 
+// 将排班结果聚合成人员、班组、班次、异常和调整等统计视图。
 function buildStatistics(results: IScheduleResult[]) {
+  // 工时和人员/班组统计只看工作班；休息记录单独计数，避免把休息算入工时。
   const workResults = results.filter((result) => result.shift !== '休息');
   const personMap = new Map<string, PersonStat>();
   const teamMap = new Map<string, TeamStat>();
@@ -217,6 +227,7 @@ function buildStatistics(results: IScheduleResult[]) {
   };
 }
 
+// 班次排序规则，保证早班、晚班、长白班按固定顺序展示。
 function getShiftOrder(shift: string) {
   if (shift === '早班') return 1;
   if (shift === '晚班') return 2;
@@ -224,6 +235,7 @@ function getShiftOrder(shift: string) {
   return 9;
 }
 
+// 轻量进度条，用于展示工时占比和班次占比。
 function ProgressBar({ value, className }: { value: number; className: string }) {
   return (
     <div className="h-2 overflow-hidden rounded-full bg-muted">
@@ -232,6 +244,7 @@ function ProgressBar({ value, className }: { value: number; className: string })
   );
 }
 
+// 顶部摘要卡片，统一展示统计指标和图标色块。
 function SummaryCard({
   title,
   value,
@@ -258,6 +271,7 @@ function SummaryCard({
   );
 }
 
+// 统计内容区：根据当前结果计算图表/表格数据，并处理加载和空状态。
 function StatisticsContent({
   results,
   range,
@@ -434,7 +448,9 @@ function StatisticsContent({
   );
 }
 
+// 数据统计页：支持按周或自定义时间范围查看排班执行统计。
 export default function DataStatisticsPage() {
+  // 页面状态：统计模式、时间范围、查询结果、加载态和错误提示。
   const [activeTab, setActiveTab] = useState<StatisticsTab>('week');
   const [weekDate, setWeekDate] = useState(formatDate(new Date()));
   const [customStartDate, setCustomStartDate] = useState(getWeekRange(formatDate(new Date())).startDate);
@@ -448,6 +464,7 @@ export default function DataStatisticsPage() {
   const currentRange = activeTab === 'week' ? weekRange : appliedRange;
   const isCustomRangeInvalid = customStartDate > customEndDate;
 
+  // 每次统计范围变化时重新拉取排班结果，统计逻辑在前端聚合。
   useEffect(() => {
     let canceled = false;
     const loadStatistics = async () => {
@@ -457,6 +474,7 @@ export default function DataStatisticsPage() {
         const params = new URLSearchParams();
         params.set('startDate', currentRange.startDate);
         params.set('endDate', currentRange.endDate);
+        // 统计复用排班结果接口，天然包含请假替班和换班后的最终执行口径。
         const data = await apiGet<IScheduleResult[]>(`/schedule-results?${params.toString()}`);
         if (!canceled) setResults(data);
       } catch (error) {
@@ -475,10 +493,12 @@ export default function DataStatisticsPage() {
     };
   }, [currentRange.startDate, currentRange.endDate]);
 
+  // 快速切换上一周/下一周。
   const changeWeek = (days: number) => {
     setWeekDate(formatDate(addDays(parseDate(weekDate), days)));
   };
 
+  // 应用自定义时间范围，只有点击按钮后才刷新统计范围。
   const applyCustomRange = () => {
     if (isCustomRangeInvalid) return;
     setAppliedRange({ startDate: customStartDate, endDate: customEndDate });
@@ -486,6 +506,7 @@ export default function DataStatisticsPage() {
 
   return (
     <div className="space-y-6">
+      {/* 筛选区：在按周统计和自定义时间段之间切换。 */}
       <Card className="rounded-[8px] border-border shadow-sm">
         <CardHeader className="space-y-2">
           <CardTitle className="text-xl font-bold">数据统计</CardTitle>
@@ -542,6 +563,7 @@ export default function DataStatisticsPage() {
         </Card>
       )}
 
+      {/* 统计展示区：包含摘要卡、人员表、班组表和调整概览。 */}
       <StatisticsContent results={results} range={currentRange} isLoading={isLoading} />
     </div>
   );

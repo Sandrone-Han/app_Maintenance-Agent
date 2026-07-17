@@ -63,9 +63,11 @@ type SwapRecommendation = {
 };
 
 @Injectable()
+// 换班服务：为同周排班提供换班推荐、创建和撤销能力。
 export class ScheduleSwapService {
   constructor(private readonly databaseService: DatabaseService) {}
 
+  // 查询换班记录，支持按源排班结果筛选。
   async findAll(query: Record<string, string | undefined>) {
     const filters: string[] = [];
     const params: Record<string, string> = {};
@@ -92,6 +94,7 @@ export class ScheduleSwapService {
     return rows.map((row) => this.toDto(row));
   }
 
+  // 获取某条排班结果的可换班候选。
   async getRecommendations(resultId: string) {
     if (!resultId) throw new BadRequestException('resultId 不能为空');
     const source = await this.loadResult(resultId);
@@ -99,6 +102,7 @@ export class ScheduleSwapService {
     this.ensureWorkSourceShift(source.SHIFT_NAME);
     await this.ensureResultAvailableForSwap(source.ID);
 
+    // 推荐范围固定在源班次所在自然周，日期不参与优先级排序。
     return {
       resultId,
       workDate: this.formatDate(source.WORK_DATE),
@@ -108,6 +112,7 @@ export class ScheduleSwapService {
     };
   }
 
+  // 创建换班，交换两条排班结果的人员和调整标记。
   async create(rawPayload: unknown) {
     const payload = this.parseCreatePayload(rawPayload);
     if (payload.sourceResultId === payload.targetResultId) {
@@ -124,12 +129,14 @@ export class ScheduleSwapService {
       throw new BadRequestException('只能在同一次排班任务内换班');
     }
 
+    // 创建时复用推荐结果校验，确保只能提交当前规则下可执行的目标班次。
     const recommendations = await this.buildRecommendations(source);
     if (!recommendations.some((item) => item.resultId === target.ID)) {
       throw new BadRequestException('目标班次不满足换班条件');
     }
 
     const id = randomUUID();
+    // 在事务中锁定两条排班结果，防止并发调整造成交叉覆盖。
     await this.databaseService.transaction(async (connection) => {
       await this.lockScheduleResults(connection, [source.ID, target.ID]);
       await this.ensureResultIsLatestForUpdate(connection, source.ID);
@@ -172,6 +179,7 @@ export class ScheduleSwapService {
     return { id, sourceResultId: source.ID, targetResultId: target.ID, status: '生效' };
   }
 
+  // 撤销换班，恢复双方原始人员。
   async cancel(id: string) {
     const rows = await this.databaseService.query<{ ID: string; STATUS: string }>(
       'SELECT ID, STATUS FROM SCHEDULE_RESULT_SWAP WHERE ID = :id',
@@ -193,7 +201,9 @@ export class ScheduleSwapService {
     return { id, status: '已撤销' };
   }
 
+  // 基于同周、同日占用、请假和风险评分生成换班候选。
   private async buildRecommendations(source: ScheduleResultRow) {
+    // 换班候选可以是工作班或休息班次，但发起源必须是工作班。
     const [monday, sunday] = this.weekRangeForDate(source.WORK_DATE);
     const candidates = await this.databaseService.query<ScheduleResultRow>(
       `SELECT ID, JOB_ID, WORK_DATE, SHIFT_NAME, TEAM, PERSON_NAME, ROLE_NAME, SKILLS_TEXT, ACTUAL_TEAM
@@ -263,6 +273,7 @@ export class ScheduleSwapService {
       });
     }
 
+    // 低风险优先；若没有低风险，只返回最低风险分的一档兜底候选。
     const sorted = result.sort((a, b) => {
       if (a.riskScore !== b.riskScore) return a.riskScore - b.riskScore;
       if (a.priority !== b.priority) return a.priority - b.priority;
@@ -283,6 +294,7 @@ export class ScheduleSwapService {
       : sorted.filter((item) => item.riskScore === minRiskScore);
   }
 
+  // 解析创建换班请求体。
   private parseCreatePayload(rawPayload: unknown) {
     if (!rawPayload || typeof rawPayload !== 'object') {
       throw new BadRequestException('请求体不能为空');
@@ -295,7 +307,9 @@ export class ScheduleSwapService {
     };
   }
 
+  // 检查结果是否可用于换班。
   private async ensureResultAvailableForSwap(resultId: string) {
+    // 换班和请假替班互斥，避免同一排班结果被多层覆盖。
     if (await this.hasActiveAdjustment(resultId)) {
       throw new BadRequestException('该班次已有生效请假替班，不能换班');
     }
@@ -304,18 +318,22 @@ export class ScheduleSwapService {
     }
   }
 
+  // 只允许换班最新任务中的排班结果。
   private async ensureResultIsLatest(resultId: string) {
     if (!(await this.isResultLatest(resultId))) {
       throw new BadRequestException('只能对当前最新版本的排班结果进行换班');
     }
   }
 
+  // 源排班必须是实际工作班次。
   private ensureWorkSourceShift(shiftName: string) {
+    // 休息班次只能作为候选目标，不能作为换班发起源。
     if (shiftName === '休息') {
       throw new BadRequestException('休息记录只能作为换班候选，不能作为换班发起班次');
     }
   }
 
+  // 事务内再次确认排班结果仍可换班。
   private async ensureResultAvailableForSwapForUpdate(connection: oracledb.Connection, resultId: string) {
     if (await this.hasActiveAdjustmentForUpdate(connection, resultId)) {
       throw new BadRequestException('该班次已有生效请假替班，不能换班');
@@ -326,12 +344,14 @@ export class ScheduleSwapService {
   }
 
   private async ensureResultIsLatestForUpdate(connection: oracledb.Connection, resultId: string) {
+    // 使用事务内校验兜住并发场景，避免旧版本结果被换班。
     const latestCount = await this.countWithConnection(connection, this.latestResultSql(), { resultId });
     if (latestCount === 0) {
       throw new BadRequestException('只能对当前最新版本的排班结果进行换班');
     }
   }
 
+  // 锁定源排班和目标排班，保证互换过程原子性。
   private async lockScheduleResults(connection: oracledb.Connection, resultIds: string[]) {
     const sortedIds = [...resultIds].sort();
     await connection.execute(
@@ -345,6 +365,7 @@ export class ScheduleSwapService {
     );
   }
 
+  // 换班和请假替班互斥，创建前需检查替班占用。
   private async hasActiveAdjustment(resultId: string) {
     const rows = await this.databaseService.query<{ CNT: number }>(
       `SELECT COUNT(*) AS CNT
@@ -366,6 +387,7 @@ export class ScheduleSwapService {
     return count > 0;
   }
 
+  // 检查是否已有生效换班，避免重复换。
   private async hasActiveSwap(resultId: string) {
     const rows = await this.databaseService.query<{ CNT: number }>(
       `SELECT COUNT(*) AS CNT
@@ -402,6 +424,7 @@ export class ScheduleSwapService {
     return Number(result.rows?.[0]?.CNT ?? 0);
   }
 
+  // 判断结果是否属于当前人员当天最新任务。
   private async isResultLatest(resultId: string) {
     const rows = await this.databaseService.query<{ CNT: number }>(
       this.latestResultSql(),
@@ -410,6 +433,7 @@ export class ScheduleSwapService {
     return Number(rows[0]?.CNT ?? 0) > 0;
   }
 
+  // 休息记录若已被替班消耗，则不能再作为换班候选。
   private async isRestConsumedByAdjustment(result: ScheduleResultRow) {
     const rows = await this.databaseService.query<{ CNT: number }>(
       `SELECT COUNT(*) AS CNT
@@ -427,6 +451,7 @@ export class ScheduleSwapService {
     return Number(rows[0]?.CNT ?? 0) > 0;
   }
 
+  // 最新排班结果判定 SQL。
   private latestResultSql() {
     return `
       WITH target_result AS (
@@ -459,6 +484,7 @@ export class ScheduleSwapService {
       WHERE sr.ID = :resultId`;
   }
 
+  // 判断人员当天是否还有其他有效工作班次。
   private async hasOtherAssignment(jobId: string, personName: string, date: string, excludedIds: string[]) {
     const rows = await this.databaseService.query<{ CNT: number }>(
       `SELECT COUNT(*) AS CNT
@@ -475,6 +501,7 @@ export class ScheduleSwapService {
     return Number(rows[0]?.CNT ?? 0) > 0;
   }
 
+  // 判断候选人在目标日期是否请假/休假。
   private async isAbsent(personName: string, date: string) {
     const rows = await this.databaseService.query<{ CNT: number }>(
       `SELECT COUNT(*) AS CNT
@@ -488,6 +515,7 @@ export class ScheduleSwapService {
     return Number(rows[0]?.CNT ?? 0) > 0;
   }
 
+  // 加载单条排班结果详情。
   private async loadResult(id: string) {
     const rows = await this.databaseService.query<ScheduleResultRow>(
       `SELECT ID, JOB_ID, WORK_DATE, SHIFT_NAME, TEAM, PERSON_NAME, ROLE_NAME, SKILLS_TEXT, ACTUAL_TEAM
@@ -511,6 +539,7 @@ export class ScheduleSwapService {
     return [monday, sunday] as const;
   }
 
+  // 换班限定在同一自然周内，避免跨周破坏统计和轮换。
   private ensureSameScheduleWeek(sourceDate: Date, targetDate: Date) {
     const target = new Date(targetDate);
     target.setHours(0, 0, 0, 0);
@@ -534,6 +563,7 @@ export class ScheduleSwapService {
     return typeof value === 'string' ? value.trim() : '';
   }
 
+  // 数据库行转前端换班记录结构。
   private toDto(row: SwapRow) {
     return {
       id: row.ID,

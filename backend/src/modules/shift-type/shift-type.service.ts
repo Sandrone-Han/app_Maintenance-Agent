@@ -20,9 +20,11 @@ type ShiftTypePayload = {
 };
 
 @Injectable()
+// 班次类型服务：负责班次配置的校验和持久化。
 export class ShiftTypeService {
   constructor(private readonly databaseService: DatabaseService) {}
 
+  // 查询班次基础信息，供班组管理和排班引擎读取。
   async findAll() {
     const rows = await this.databaseService.query<ShiftTypeRow>(`
       SELECT ID, SHIFT_CATEGORY, SCHEDULE_RULE, SHIFT_NAME, START_TIME, END_TIME
@@ -40,6 +42,7 @@ export class ShiftTypeService {
     }));
   }
 
+  // 创建班次配置。
   async create(rawPayload: unknown) {
     const payload = this.parsePayload(rawPayload);
     const id = randomUUID();
@@ -53,6 +56,7 @@ export class ShiftTypeService {
     return { id };
   }
 
+  // 更新班次配置前先确认记录存在。
   async update(id: string, rawPayload: unknown) {
     const payload = this.parsePayload(rawPayload);
     await this.ensureExists(id);
@@ -72,12 +76,14 @@ export class ShiftTypeService {
     return { id };
   }
 
+  // 删除班次配置前先确认记录存在。
   async remove(id: string) {
     await this.ensureExists(id);
     await this.databaseService.execute('DELETE FROM SHIFT_TYPE WHERE ID = :id', { id });
     return { id };
   }
 
+  // 校验班次表单必填字段。
   private parsePayload(rawPayload: unknown): ShiftTypePayload {
     if (!rawPayload || typeof rawPayload !== 'object') {
       throw new BadRequestException('请求体不能为空');
@@ -101,6 +107,7 @@ export class ShiftTypeService {
     return payload;
   }
 
+  // 通用存在性校验。
   private async ensureExists(id: string) {
     const rows = await this.databaseService.query<{ CNT: number }>(
       'SELECT COUNT(*) AS CNT FROM SHIFT_TYPE WHERE ID = :id',

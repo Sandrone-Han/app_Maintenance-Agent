@@ -1,5 +1,6 @@
 // EXPORTS: IScheduleResult, MOCK_SCHEDULE_RESULTS
 
+// 排班结果行结构，覆盖原始排班、借调、请假替班和换班后的展示字段。
 export interface IScheduleResult {
   id: string;
   jobId?: string;
@@ -28,4 +29,5 @@ export interface IScheduleResult {
   swapReason?: string;
 }
 
+// 排班结果默认空数组，等待排班任务生成或从后端查询。
 export const MOCK_SCHEDULE_RESULTS: IScheduleResult[] = [];

@@ -77,7 +77,9 @@ const emptyShiftForm: ShiftForm = {
   endTime: '19:00',
 };
 
+// 班组管理页：维护人员基础资料、班次配置，并支持 Excel 批量导入人员。
 export default function TeamManagePage() {
+  // 页面核心状态：人员列表、班次列表、两个编辑表单和导入文件输入框。
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [shiftTypes, setShiftTypes] = useState<ShiftType[]>([]);
   const [memberForm, setMemberForm] = useState<MemberForm>(emptyMemberForm);
@@ -85,6 +87,7 @@ export default function TeamManagePage() {
   const [isLoading, setIsLoading] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
+  // 并行加载人员与班次配置，两个 Tab 共用这份基础数据。
   const loadData = async () => {
     setIsLoading(true);
     try {
@@ -113,6 +116,7 @@ export default function TeamManagePage() {
     setShiftForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  // 保存人员资料：有 id 时更新，无 id 时新增。
   const saveMember = async () => {
     if (!memberForm.name) {
       toast.error('人员姓名不能为空');
@@ -143,6 +147,7 @@ export default function TeamManagePage() {
     }
   };
 
+  // 保存班次配置：用于排班引擎识别班次名称和时间段。
   const saveShift = async () => {
     if (!shiftForm.shiftName || !shiftForm.startTime || !shiftForm.endTime) {
       toast.error('班次信息不能为空');
@@ -164,6 +169,7 @@ export default function TeamManagePage() {
     }
   };
 
+  // 将人员行数据回填到表单，便于复用同一套输入区编辑。
   const editMember = (member: TeamMember) => {
     setMemberForm({
       id: member.id,
@@ -176,10 +182,12 @@ export default function TeamManagePage() {
     });
   };
 
+  // 将班次行数据回填到班次表单。
   const editShift = (shift: ShiftType) => {
     setShiftForm(shift);
   };
 
+  // 删除人员后刷新列表，避免页面保留旧数据。
   const deleteMember = async (id: string) => {
     try {
       await apiDelete(`/team-members/${id}`);
@@ -190,6 +198,7 @@ export default function TeamManagePage() {
     }
   };
 
+  // 删除班次后刷新列表，保持 Tab 数据一致。
   const deleteShift = async (id: string) => {
     try {
       await apiDelete(`/shift-types/${id}`);
@@ -200,6 +209,7 @@ export default function TeamManagePage() {
     }
   };
 
+  // 上传 Excel 到后端导入接口，后端负责解析并返回新增/更新统计。
   const importTeamMembers = async (file: File | undefined) => {
     if (!file) return;
 
@@ -220,6 +230,7 @@ export default function TeamManagePage() {
 
   return (
     <div className="space-y-6">
+      {/* 页面标题和刷新/导入操作区。 */}
       <Card className="rounded-[8px] border-border shadow-sm">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between gap-3">
@@ -260,6 +271,7 @@ export default function TeamManagePage() {
         </CardHeader>
       </Card>
 
+      {/* 两个 Tab 分别管理人员资料和班次基础信息。 */}
       <Tabs defaultValue="members" className="space-y-4">
         <TabsList>
           <TabsTrigger value="members">班组人员信息</TabsTrigger>
@@ -382,6 +394,7 @@ export default function TeamManagePage() {
   );
 }
 
+// 表单字段包装组件，统一 label 与控件的垂直间距。
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="space-y-2">
@@ -391,6 +404,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+// 表格行操作按钮，复用于人员和班次两类表格。
 function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }) {
   return (
     <div className="flex justify-end gap-2">
@@ -404,6 +418,7 @@ function RowActions({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => 
   );
 }
 
+// 简单数据表组件，接收表头和二维单元格内容渲染管理表格。
 function DataTable({ headers, rows }: { headers: string[]; rows: React.ReactNode[][] }) {
   return (
     <Card className="rounded-[8px] border-border shadow-sm">

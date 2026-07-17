@@ -144,7 +144,9 @@ const DEFAULT_CYCLE_INDEX: Record<string, number> = {
 };
 
 @Injectable()
+// 确定性排班引擎：按班组轮换、技能、请假、特殊要求和借调规则生成结果。
 export class ScheduleEngineService {
+  // 排班主流程：构造日期、初始化账本、逐日生成班次并输出最终轮换状态。
   generate(input: ScheduleEngineInput): ScheduleEngineOutput {
     const logs: string[] = ['开始排班。'];
     const rows: ScheduleResultInsert[] = [];
@@ -176,6 +178,7 @@ export class ScheduleEngineService {
       };
     }
 
+    // 排班主流程只生成原始结果；请假替班和换班通过覆盖层处理，不参与这里的轮换计算。
     const specialRules = this.buildSpecialRuleMap(input.specialRequirements);
     const cycleBase = this.buildCycleBase(input.startDate, input.teamScheduleRecords, dateList, logs);
     const cycleState = { ...cycleBase };
@@ -198,6 +201,7 @@ export class ScheduleEngineService {
       const earlyTeam = rotation.find((item) => item.shiftName === '早班')?.team;
       const lateTeam = rotation.find((item) => item.shiftName === '晚班')?.team;
 
+      // B 组长白班独立于 A 组早晚班轮换，先落位后再计算早班覆盖人数。
       this.assignLongDayShift({
         rows,
         logs,
@@ -230,6 +234,7 @@ export class ScheduleEngineService {
         this.getRestoredRequirement('晚班', isWeekend, input.weekendMachineCount),
       );
 
+      // A 组仍按 2早+2晚+2休滚动，但自然周最多工作 4 天，低开机/周末优先减班为休息。
       if (earlyTeam) {
         const restReason = earlyForcedRequests.length > 0
           ? null
@@ -333,6 +338,7 @@ export class ScheduleEngineService {
       actualRestTeams = this.getActualRestTeamsFromRows(rows, date);
       restTeamsByDate.set(date, actualRestTeams);
 
+      // 所有人每天都要有原始结果；休息记录用于审计和后续替班/换班候选。
       for (const team of A_TEAMS) {
         const plannedShiftName = team === activeEarlyTeam ? '早班' : team === activeLateTeam ? '晚班' : undefined;
         this.assignRestShift({
@@ -365,6 +371,7 @@ export class ScheduleEngineService {
         ledger,
       });
 
+      // 减班也要进入轮换周期，否则下一天会把被减掉的班继续补回来。
       this.advanceCycleState(cycleState, this.buildActualShiftByTeam(rows, date));
       finalTeamRecords = this.buildFinalTeamRecords(input.endDate, cycleState, rows);
     }
@@ -386,6 +393,7 @@ export class ScheduleEngineService {
     };
   }
 
+  // 校验排班必需的基础数据是否齐全。
   private validateBaseData(members: Member[], records: TeamScheduleRecordRow[]) {
     const errors: string[] = [];
     if (members.length === 0) errors.push('人员数据为空');
@@ -410,6 +418,7 @@ export class ScheduleEngineService {
     return errors;
   }
 
+  // 根据班组轮换记录推导排班开始日的 A 班组轮换基准。
   private buildCycleBase(startDate: string, records: TeamScheduleRecordRow[], dateList: string[], logs: string[]) {
     const base: Record<string, number> = {};
 
@@ -456,6 +465,7 @@ export class ScheduleEngineService {
     return errors;
   }
 
+  // 生成 B 组长白班排班，并纳入连续上班校验。
   private assignLongDayShift(input: {
     rows: ScheduleResultInsert[];
     logs: string[];
@@ -501,6 +511,7 @@ export class ScheduleEngineService {
     input.logs.push(`${input.date} 长白班生成 ${candidates.length} 人。`);
   }
 
+  // 为早班/晚班分配人员，先满足固定人员，再补齐人数和技能要求。
   private assignAndValidateShift(input: {
     rows: ScheduleResultInsert[];
     logs: string[];
@@ -568,6 +579,7 @@ export class ScheduleEngineService {
     }
   }
 
+  // 为休息班组记录休息行，便于泳道图和后续候选计算保留完整状态。
   private assignRestShift(input: {
     rows: ScheduleResultInsert[];
     logs: string[];
@@ -584,6 +596,7 @@ export class ScheduleEngineService {
   }) {
     if (!input.restTeam) return;
 
+    // 休息记录不是工作班，不计入工时；但保留人员当天状态，供候选推荐和审计使用。
     const restMembers = input.members.filter(
       (member) =>
         member.TEAM === input.restTeam &&
@@ -634,6 +647,7 @@ export class ScheduleEngineService {
     requirement: ShiftRequirement,
     weeklyWorkDaysByTeam: Map<string, number>,
   ) {
+    // 返回具体原因便于日志解释为什么把原计划工作班降为休息。
     if (this.getTeamWeekWorkDays(weeklyWorkDaysByTeam, date, team) >= MAX_A_TEAM_WORK_DAYS_PER_WEEK) {
       return `自然周已达到 ${MAX_A_TEAM_WORK_DAYS_PER_WEEK} 天上班上限`;
     }
@@ -645,6 +659,7 @@ export class ScheduleEngineService {
     return null;
   }
 
+  // 特殊要求可能抬高某班次最低人数，避免指定上班后被人数上限挤出。
   private withSpecialRequirementMinimum(
     requirement: ShiftRequirement,
     forcedRequests: SpecialRequirement[],
@@ -693,7 +708,9 @@ export class ScheduleEngineService {
     return shifts;
   }
 
+  // 根据实际排出的早/晚/休推进轮换状态，保持上4休2连续性。
   private advanceCycleState(state: Record<string, number>, actualShiftByTeam: Map<string, string>) {
+    // 按实际落位后的班次推进轮换，兼容特殊要求、减班和校验失败导致的实际班次变化。
     const candidatesByTeam = A_TEAMS.map((team) => ({
       team,
       indexes: CYCLE
@@ -735,6 +752,7 @@ export class ScheduleEngineService {
     }
   }
 
+  // 当实际班次因借调或特殊要求偏离时，尝试恢复下一天轮换状态。
   private recoverNextCycleState(state: Record<string, number>, actualShiftByTeam: Map<string, string>) {
     const normalNextState = Object.fromEntries(A_TEAMS.map((team) => [team, this.mod(state[team] + 1, CYCLE.length)])) as Record<string, number>;
     const allIndexes = CYCLE.map((_, index) => index);
@@ -780,6 +798,7 @@ export class ScheduleEngineService {
     return `${this.getWeekStart(date)}::${team}`;
   }
 
+  // 处理“必须上班/只能上指定班次”等强制性特殊要求。
   private addForcedAssignments(
     input: {
       logs: string[];
@@ -833,6 +852,7 @@ export class ScheduleEngineService {
     }
   }
 
+  // 当本班组人数或技能不足时，从休息班组挑选可借调人员。
   private borrowIfNeeded(
     input: {
       logs: string[];
@@ -852,6 +872,7 @@ export class ScheduleEngineService {
   ) {
     if (input.restTeams.length === 0) return;
 
+    // 借调只从当天实际休息班组或长白班中挑人，避免破坏已落位工作班。
     const borrowSteps = [
       { reason: '缺组长', needs: () => input.requirement.requireLeader && !this.hasLeader(assignments), match: (member: Member) => this.isLeader(member) },
       { reason: '缺组员', needs: () => input.requirement.requireMember && !this.hasMember(assignments), match: (member: Member) => this.isMember(member) },
@@ -894,6 +915,7 @@ export class ScheduleEngineService {
     }
   }
 
+  // 借调候选排序评分，优先选择风险更低、技能更匹配的人。
   private getBorrowCandidateScore(
     member: Member,
     input: {
@@ -931,6 +953,7 @@ export class ScheduleEngineService {
       .length;
   }
 
+  // 将必须上班类要求应用到实际班次中，必要时调整目标班组。
   private applyMustWorkRequests(input: {
     rows: ScheduleResultInsert[];
     logs: string[];
@@ -946,6 +969,7 @@ export class ScheduleEngineService {
     shiftContext: ShiftContext;
     requests: SpecialRequirement[];
   }) {
+    // 特殊要求作为生成后的修正步骤处理；冲突时记录异常，不静默覆盖既有班次。
     for (const request of input.requests) {
       const existing = input.rows.find((row) => row.workDate === input.date && row.personName === request.personName);
       if (existing) {
@@ -1032,6 +1056,7 @@ export class ScheduleEngineService {
     }
   }
 
+  // 根据工作日/周末、开机数量和班次计算人数与技能要求。
   private getRequirement(
     shiftName: '早班' | '晚班',
     isWeekend: boolean,
@@ -1096,6 +1121,7 @@ export class ScheduleEngineService {
     return 6;
   }
 
+  // 校验单个班次是否满足人数、组长和关键技能要求。
   private validateShift(assignments: Assignment[], requirement: ShiftRequirement) {
     const errors: string[] = [];
     if (assignments.length < requirement.minCount) errors.push(`人数不足，要求 ${requirement.minCount} 人，实际 ${assignments.length} 人`);
@@ -1117,6 +1143,7 @@ export class ScheduleEngineService {
     return /必须满足|人数不足|缺组长|缺组员|缺电工|缺注塑维修|当天被安排|同一天同时存在早班和晚班|存在多个实际班组|未生成 B 班组长白班|特殊要求冲突|特殊要求未满足/.test(reason);
   }
 
+  // 全局校验跨班次规则：同日多班、休息间隔、连续上班和特殊要求冲突。
   private runGlobalValidation(
     rows: ScheduleResultInsert[],
     dateList: string[],
@@ -1124,6 +1151,7 @@ export class ScheduleEngineService {
     attendance: AttendanceRow[],
     restTeamsByDate: Map<string, string[]>,
   ) {
+    // 全局校验兜底检查跨班次冲突，覆盖单个班次校验看不到的问题。
     const errors: string[] = [];
     for (const date of dateList) {
       const dayRows = rows.filter((row) => row.workDate === date);
@@ -1193,12 +1221,14 @@ export class ScheduleEngineService {
     }
   }
 
+  // 写入排班行前做重复保护，避免同一人员同日同班重复入表。
   private appendRowSafely(input: {
     rows: ScheduleResultInsert[];
     exceptions: string[];
     logs: string[];
     row: ScheduleResultInsert;
   }) {
+    // 所有追加结果都走这里，保证同一人同一天不会被重复写入多个原始结果。
     const conflict = input.rows.find((row) => row.workDate === input.row.workDate && row.personName === input.row.personName);
     if (conflict) {
       const reason = `${input.row.personName} 已有${conflict.shiftName}，拒绝追加${input.row.shiftName}`;
@@ -1252,6 +1282,7 @@ export class ScheduleEngineService {
     };
   }
 
+  // 生成排班结束后的班组轮换记录，供下一次排班衔接。
   private buildFinalTeamRecords(endDate: string, nextCycleState: Record<string, number>, rows: ScheduleResultInsert[]) {
     const nextDate = this.formatDate(this.addDays(new Date(`${endDate}T00:00:00`), 1));
     return A_TEAMS.map((team) => {
@@ -1278,6 +1309,7 @@ export class ScheduleEngineService {
     return rows.some((row) => row.workDate === date && row.actualTeam === team && row.shiftName === shiftName);
   }
 
+  // 判断人员是否可分配到指定日期/班次。
   private canAssign(
     member: Member,
     date: string,
@@ -1290,6 +1322,7 @@ export class ScheduleEngineService {
     return this.getCannotAssignReasons(member, date, shiftName, attendance, specialRules, ledger, options).length === 0;
   }
 
+  // 给不可分配人员生成可读原因，写入日志或异常提示。
   private getCannotAssignReasons(
     member: Member,
     date: string,
@@ -1317,6 +1350,7 @@ export class ScheduleEngineService {
     return true;
   }
 
+  // 校验人员是否满足当天特殊要求限制。
   private satisfiesSpecialRules(personName: string, date: string, shiftName: string, specialRules: Map<string, SpecialRequirement[]>) {
     const rules = specialRules.get(`${date}::${personName}`) ?? [];
     return rules.every((rule) => {
@@ -1380,6 +1414,7 @@ export class ScheduleEngineService {
     }
   }
 
+  // 用历史排班初始化人员账本，支持跨排班周期的休息/连续上班校验。
   private buildInitialLedger(startDate: string, rows: HistoricalScheduleResultRow[]): AssignmentLedger {
     const ledger: AssignmentLedger = {
       datesByPerson: new Map(),
@@ -1397,6 +1432,7 @@ export class ScheduleEngineService {
     return ledger;
   }
 
+  // 用历史结果初始化本周班组工作天数，防止新周期一开始就超限。
   private buildInitialWeeklyWorkDays(startDate: string, rows: HistoricalScheduleResultRow[], members: Member[]) {
     const result = new Map<string, number>();
     const startWeek = this.getWeekStart(startDate);
@@ -1420,6 +1456,7 @@ export class ScheduleEngineService {
     return result;
   }
 
+  // 候选人员排序，尽量让排班更均衡并降低借调风险。
   private sortCandidates(candidates: Member[], ledger: AssignmentLedger, reason?: string) {
     return [...candidates].sort((a, b) => {
       const borrowDiff = (ledger.borrowCountByPerson.get(a.NAME) ?? 0) - (ledger.borrowCountByPerson.get(b.NAME) ?? 0);
@@ -1433,6 +1470,7 @@ export class ScheduleEngineService {
     });
   }
 
+  // 将特殊要求按“人员+日期”分组，便于排班时快速判断。
   private buildSpecialRuleMap(requirements: SpecialRequirement[]) {
     const map = new Map<string, SpecialRequirement[]>();
     for (const requirement of requirements) {

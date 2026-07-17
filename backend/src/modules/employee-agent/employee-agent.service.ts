@@ -63,9 +63,11 @@ type ParsedQuestion = {
 };
 
 @Injectable()
+// 员工查询服务：把自然语言问题解析成意图，并返回档案、排班和出勤结果。
 export class EmployeeAgentService {
   constructor(private readonly databaseService: DatabaseService) {}
 
+  // 员工查询主入口：解析问题、加载数据、构造回答和结构化结果。
   async query(rawPayload: unknown) {
     const payload = this.parsePayload(rawPayload);
     const allMembers = await this.loadMembers();
@@ -123,6 +125,7 @@ export class EmployeeAgentService {
     };
   }
 
+  // 校验查询请求体并规范化日期范围。
   private parsePayload(rawPayload: unknown): Required<EmployeeAgentPayload> {
     if (!rawPayload || typeof rawPayload !== 'object') {
       throw new BadRequestException('请求体不能为空');
@@ -142,6 +145,7 @@ export class EmployeeAgentService {
   }
 
   // This is intentionally isolated so a future LLM parser can replace only this layer.
+  // 当前先用关键词和姓名匹配解析问题，未来可只替换这一层为 LLM 解析。
   private parseMessage(payload: Required<EmployeeAgentPayload>, members: MemberRow[]): ParsedQuestion {
     const message = payload.message;
     const member = members.find((item) => message.includes(item.NAME));
@@ -156,6 +160,7 @@ export class EmployeeAgentService {
     };
   }
 
+  // 从关键词识别用户要查档案、排班、借调、异常还是出勤。
   private detectIntent(message: string): AgentIntent {
     if (/(个人信息|档案|技能|班组|角色)/.test(message)) return 'employee_profile';
     if (/(借调)/.test(message)) return 'borrow_history';
@@ -165,6 +170,7 @@ export class EmployeeAgentService {
     return 'summary';
   }
 
+  // 从消息中匹配最可能的员工姓名。
   private extractLikelyName(message: string, members: MemberRow[]) {
     const clean = message.replace(/查询|查看|最近|未来|\d+|天|排班|历史|记录|个人信息|档案|技能|班组|角色|借调|异常|休假|请假|出勤|的/g, '');
     const candidate = clean.trim().slice(0, 10);
@@ -172,6 +178,7 @@ export class EmployeeAgentService {
     return members.find((member) => member.NAME.includes(candidate) || candidate.includes(member.NAME))?.NAME ?? candidate;
   }
 
+  // 加载全部员工及技能，用于姓名匹配和档案展示。
   private async loadMembers() {
     return this.databaseService.query<MemberRow>(`
       SELECT
@@ -189,6 +196,7 @@ export class EmployeeAgentService {
     `);
   }
 
+  // 查询指定员工在时间范围内的最新有效排班结果。
   private async loadSchedules(personName: string, startDate: string, endDate: string) {
     return this.databaseService.query<ScheduleRow>(
       `SELECT
@@ -247,6 +255,7 @@ export class EmployeeAgentService {
     );
   }
 
+  // 查询指定员工在时间范围内的出勤/请假记录。
   private async loadAttendance(personName: string, startDate: string, endDate: string) {
     return this.databaseService.query<AttendanceRow>(
       `SELECT ID, PERSON_NAME, TEAM, START_DATE, END_DATE, STATUS, UPDATED_AT
@@ -259,6 +268,7 @@ export class EmployeeAgentService {
     );
   }
 
+  // 根据排班结果统计早班、晚班、长白班、借调和异常数量。
   private buildStats(schedules: ScheduleRow[]) {
     return {
       total: schedules.length,
@@ -270,6 +280,7 @@ export class EmployeeAgentService {
     };
   }
 
+  // 根据识别意图生成可读回答，并附加同名提示。
   private buildAnswer(
     parsed: ParsedQuestion,
     profile: ReturnType<EmployeeAgentService['toProfile']>,
@@ -297,6 +308,7 @@ export class EmployeeAgentService {
     return `${profile.name} 在 ${parsed.startDate} 至 ${parsed.endDate} 共排班 ${stats.total} 次，其中早班 ${stats.early} 次、晚班 ${stats.late} 次、长白班 ${stats.longDay} 次、借调 ${stats.borrowed} 次、异常 ${stats.exceptions} 条。${duplicateNote}`;
   }
 
+  // 按意图过滤排班明细，只展示用户关心的部分。
   private filterSchedulesByIntent(intent: AgentIntent, schedules: ScheduleRow[]) {
     if (intent === 'borrow_history') return schedules.filter((row) => row.IS_BORROWED === '是');
     if (intent === 'exception_history') return schedules.filter((row) => row.VALIDATION_RESULT && row.VALIDATION_RESULT !== '通过');
@@ -305,10 +317,12 @@ export class EmployeeAgentService {
     return schedules;
   }
 
+  // 仅在出勤类或综合类查询时展示出勤记录。
   private filterAttendanceByIntent(intent: AgentIntent, attendance: AttendanceRow[]) {
     return intent === 'attendance_history' || intent === 'summary' ? attendance : [];
   }
 
+  // 数据库员工行转前端档案结构。
   private toProfile(row: MemberRow) {
     return {
       id: row.ID,
@@ -321,6 +335,7 @@ export class EmployeeAgentService {
     };
   }
 
+  // 数据库排班行转前端展示结构。
   private toScheduleDto(row: ScheduleRow) {
     return {
       id: row.ID,
@@ -342,6 +357,7 @@ export class EmployeeAgentService {
     };
   }
 
+  // 数据库出勤行转前端展示结构。
   private toAttendanceDto(row: AttendanceRow) {
     return {
       id: row.ID,
@@ -354,6 +370,7 @@ export class EmployeeAgentService {
     };
   }
 
+  // 查询失败时给出可能相关的员工姓名建议。
   private findCandidateNames(message: string, members: MemberRow[]) {
     return members
       .filter((member) => message.includes(member.NAME.slice(0, 1)) || member.NAME.includes(message.slice(0, 1)))
@@ -361,10 +378,12 @@ export class EmployeeAgentService {
       .map((member) => member.NAME);
   }
 
+  // 没有查到排班时返回零值统计。
   private emptyStats() {
     return { total: 0, early: 0, late: 0, longDay: 0, borrowed: 0, exceptions: 0 };
   }
 
+  // 规范化日期入参，非法日期交给默认值兜底。
   private normalizeDate(value?: string) {
     if (!value) return null;
     return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
