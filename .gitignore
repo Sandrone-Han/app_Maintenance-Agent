@@ -63,6 +63,6 @@ pnpm-lock.yaml
 # Agent files
 .agent/
 
-# Offline Docker image exports
+# Offline Docker image exports are too large for GitHub.
 offline-package/*.tar
 *.tar
