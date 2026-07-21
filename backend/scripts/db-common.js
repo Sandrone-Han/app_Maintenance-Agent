@@ -4,6 +4,8 @@ const oracledb = require('oracledb');
 
 function loadEnv() {
   const envPath = path.resolve(__dirname, '..', '.env.local');
+  if (!fs.existsSync(envPath)) return;
+
   const content = fs.readFileSync(envPath, 'utf8');
 
   for (const line of content.split(/\r?\n/)) {

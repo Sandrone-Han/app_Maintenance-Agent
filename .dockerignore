@@ -1,0 +1,17 @@
+.git
+.agents
+.codex
+.spark
+.githooks
+backend
+dist
+node_modules
+logs
+tmp
+temp
+.env
+.env.*
+*.log
+*.pid
+.DS_Store
+Thumbs.db

@@ -62,3 +62,7 @@ pnpm-lock.yaml
 
 # Agent files
 .agent/
+
+# Offline Docker image exports
+offline-package/*.tar
+*.tar

@@ -80,6 +80,11 @@ Oracle 数据库
 │
 ├─ public/                      # 静态资源目录
 ├─ scripts/                     # 前端开发和构建脚本
+├─ docker/                      # Docker 运行配置，如 nginx 反向代理配置
+├─ offline-package/             # 离线软件包输出目录，可拷贝到受限电脑运行
+├─ docker-compose.yml           # 前端、后端、Oracle 一体化 Docker 编排
+├─ Dockerfile                   # 前端生产镜像构建文件
+├─ .env.production              # 离线/生产 Docker 默认环境变量
 ├─ package.json                 # 前端依赖、脚本和插件配置
 └─ README.md                    # 项目说明文档
 ```
@@ -240,6 +245,72 @@ npm run dev
 ```
 
 前端地址以终端输出为准。
+
+## 离线软件包
+
+项目支持生成完整离线软件包，交给受限电脑运行。受限电脑不需要源码、Node.js 或 npm，只需要安装并启动 Docker Desktop。
+
+### 离线包内容
+
+离线包目录为：
+
+```txt
+offline-package/
+```
+
+当前离线包包含：
+
+```txt
+maintenance-scheduler-images.tar   # Docker 镜像包，包含前端、后端和 Oracle
+docker-compose.yml                 # 受限电脑运行用 compose
+.env.production                    # 离线运行环境变量
+first-run.ps1                      # 第一次启动脚本
+start.ps1                          # 日常启动脚本
+stop.ps1                           # 停止脚本
+status.ps1                         # 查看状态脚本
+启动说明.md                        # 给受限电脑使用者看的启动指南
+backend/db/init/                   # Oracle 初始化挂载目录
+docs/offline-docker-deployment.md  # 离线部署说明
+```
+
+### 在源码电脑生成或更新离线包
+
+在源码电脑打开 Docker Desktop，然后在项目根目录执行：
+
+```powershell
+docker pull gvenzl/oracle-free:latest
+docker compose --env-file .env.production build
+docker save --output offline-package\maintenance-scheduler-images.tar maintenance-scheduler-frontend:offline maintenance-scheduler-backend:offline gvenzl/oracle-free:latest
+```
+
+如果 `docker-compose.yml`、`.env.production` 或启动说明有更新，同步复制到 `offline-package`：
+
+```powershell
+Copy-Item docker-compose.yml offline-package\docker-compose.yml -Force
+Copy-Item .env.production offline-package\.env.production -Force
+```
+
+交付时把整个 `offline-package` 文件夹拷贝到受限电脑。
+
+### 受限电脑启动
+
+第一次运行：
+
+```powershell
+.\first-run.ps1
+```
+
+以后日常启动：
+
+```powershell
+.\start.ps1
+```
+
+浏览器访问：
+
+```txt
+http://localhost:8080
+```
 
 ## 数据库迁移
 

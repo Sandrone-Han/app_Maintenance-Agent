@@ -1,0 +1,50 @@
+services:
+  oracle:
+    image: gvenzl/oracle-free:latest
+    container_name: maintenance-oracle
+    restart: unless-stopped
+    ports:
+      - "${ORACLE_PORT:-1521}:1521"
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_PASSWORD:-oracle_sys_password}
+      APP_USER: ${DB_USER:-maintenance}
+      APP_USER_PASSWORD: ${DB_PASSWORD:-maintenance_pwd}
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+      - ./backend/db/init:/container-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  backend:
+    image: maintenance-scheduler-backend:offline
+    container_name: maintenance-backend
+    restart: unless-stopped
+    depends_on:
+      oracle:
+        condition: service_healthy
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: ${PORT:-3000}
+      DB_HOST: ${DB_HOST:-oracle}
+      DB_PORT: ${DB_PORT:-1521}
+      DB_SERVICE: ${DB_SERVICE:-FREEPDB1}
+      DB_USER: ${DB_USER:-maintenance}
+      DB_PASSWORD: ${DB_PASSWORD:-maintenance_pwd}
+
+  frontend:
+    image: maintenance-scheduler-frontend:offline
+    container_name: maintenance-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+
+volumes:
+  oracle-data:
